@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Clip använder egna Rust-kommandon; frontend får endast läsa apphändelser.",
+  "windows": ["main", "panel", "editor-*"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

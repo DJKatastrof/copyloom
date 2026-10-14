@@ -1,0 +1,72 @@
+body { min-width: 0; overflow: hidden; }
+.image-editor { height: 100dvh; display: flex; flex-direction: column; user-select: none; }
+.editor-dimensions { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.editor-save { white-space: nowrap; min-height: 32px; }
+.editor-toolbar { display: flex; gap: 12px; padding: 4px 10px; background: var(--surface); }
+.editor-tools, .editor-history, .editor-colors, .editor-zoom { display: flex; align-items: center; gap: 4px; }
+.editor-tool { display: inline-flex; gap: 7px; align-items: center; justify-content: center; padding: 7px; width: 32px; height: 32px; min-height: 32px; background: transparent; border-radius: 8px; font-size: 13px; }
+.editor-tool:hover { background: var(--background); }
+.editor-tool[aria-pressed='true'] { color: var(--accent-ink); background: var(--accent-soft); }
+.editor-options { height: 42px; min-height: 42px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 4px 14px 8px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.editor-swatch { width: 24px; height: 24px; border: 1px solid rgb(120 120 130 / 45%); border-radius: 6px; padding: 0; display: grid; place-items: center; }
+.editor-swatch[aria-pressed='true'] { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+.editor-colors { gap: 6px; }
+.editor-options .custom-select { min-width: 84px; }
+.editor-zoom { margin-left: auto; gap: 4px; white-space: nowrap; }
+.editor-zoom output { min-width: 46px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.editor-tool-help { font-size: 12px; color: var(--muted); max-width: 280px; }
+.editor-guidance { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 20px; padding: 4px 14px; background: var(--surface); color: var(--muted); font-size: 11px; line-height: 1.5; }
+.editor-guidance > :last-child { font-size: 11px; }
+.editor-background { display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+.editor-background input { min-height: 0; }
+.editor-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: none; background: var(--sidebar); outline: none; }
+.editor-stage.drawing { cursor: crosshair; }
+.editor-stage.panning { cursor: grab; }
+.editor-stage.panning:active { cursor: grabbing; }
+.editor-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.editor-text-input { position: absolute; margin: 0; resize: none; overflow: auto; border: 1px solid var(--accent-ink); border-radius: 2px; user-select: text; min-height: 0; }
+.editor-error { display: flex; gap: 12px; align-items: center; padding: 8px 20px; background: var(--accent-soft); font-size: 13px; }
+.editor-error .icon-button { margin-left: auto; }
+/* Floating like the library toast, so the canvas keeps its zoom and position. */
+.editor-notice span { user-select: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-error { background: var(--surface); color: var(--danger); }
+.editor-error span { user-select: text; }
+.editor-empty { flex: 1; display: grid; place-content: center; color: var(--muted); }
+.editor-confirm .form-actions { flex-wrap: wrap; }
+.editor-confirm .editor-discard { margin-right: auto; padding-inline: 8px; }
+@media (max-width: 900px) {
+  .editor-tool { padding: 8px; gap: 5px; }
+  .editor-options { gap: 12px; padding-inline: 16px; }
+  .editor-tool-help { order: 3; max-width: none; flex-basis: 100%; }
+  .editor-colors { gap: 6px; }
+  .editor-swatch { width: 24px; height: 24px; }
+}
+@media (max-width: 700px) {
+  .editor-toolbar { gap: 8px; }
+  .editor-tool { gap: 4px; padding-inline: 7px; font-size: 12px; }
+  .editor-tools { gap: 0; }
+  .editor-options { column-gap: 8px; }
+}
+
+.editor-toolbar { border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.editor-toolbar .icon-button { width: 30px; height: 30px; min-height: 30px; }
+.editor-history { border-left: 1px solid var(--line); padding-left: 10px; }
+.editor-zoom-value { min-width: 48px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.editor-option-label { font-size: 12px; color: var(--muted); min-width: 48px; }
+.editor-block-size { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.editor-step-number { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.editor-step-number input { width: 76px; min-height: 30px; padding: 4px 6px; }
+.editor-options .select-trigger { min-height: 30px; padding-block: 5px; }
+.editor-guidance { flex-shrink: 0; }
+@media (max-width: 700px) { .editor-guidance > :last-child { display: none; } }
+
+
+/* One toolbar: tools, history and zoom on the left, the three ways out on the right. */
+.editor-toolbar { align-items: center; padding: 6px 10px; }
+.editor-actions { display: flex; align-items: center; gap: 6px; padding-left: 10px; border-left: 1px solid var(--line); }
+.editor-actions .primary-button, .editor-actions .subtle-button { min-height: 32px; padding-block: 5px; }
+.editor-options .editor-dimensions { margin-left: auto; }
+@media (max-width: 760px) { .editor-copy { display: none; } }
+/* Small captures open small windows: zoom stays on Ctrl+wheel and the value, and the row may wrap rather than overflow. */
+.editor-toolbar { flex-wrap: wrap; row-gap: 4px; }
+@media (max-width: 720px) { .editor-zoom > .icon-button:not(:last-child) { display: none; } }

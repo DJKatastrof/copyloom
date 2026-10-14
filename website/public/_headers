@@ -1,0 +1,11 @@
+# Cloudflare Pages: security headers for every page. HSTS is set in Cloudflare (SSL/TLS → Edge Certificates).
+# The site loads only its own files and sends nothing anywhere.
+# Anything added later from another host (analytics, a checkout script) needs its host allowed here.
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=(), serial=(), hid=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
