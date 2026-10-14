@@ -30,7 +30,11 @@ Copyloom can also take over Win+V, and give it back to Windows again.
 
 ## Install
 
-Copyloom runs on Windows 11, 64-bit. It is in testing; installers will be published under [Releases](../../releases). Until then, [build it from source](#build-from-source).
+Copyloom runs on Windows 11, 64-bit. Download `Copyloom-<version>-setup.exe` from [Releases](../../releases/latest) and run it.
+
+The installer is not code-signed yet, so Windows may show *Windows protected your PC*. Choose **More info**, then **Run anyway**. Copyloom does not update itself; new versions are published under Releases.
+
+You can also [build it from source](#build-from-source).
 
 ## Features
 
