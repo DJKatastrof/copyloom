@@ -184,6 +184,7 @@ mark.todo { padding: 0 .25em; border-radius: 3px; background: #ffe58a; color: #3
 
 /* Early access: one email field and a choice, in the pricing section until checkout opens. */
 .coming-soon { margin-top: 30px; max-width: 470px; }
+.coming-soon h3 a { color: inherit; }
 .coming-soon h3 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; }
 .coming-soon > p { margin-top: 6px; color: #3c5967; font-size: 15px; }
 
