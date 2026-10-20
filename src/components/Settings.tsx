@@ -1,8 +1,8 @@
-import { t, message } from '../i18n';
+import { t, message, getLanguage } from '../i18n';
 import { useConfirmation } from './ConfirmDialog';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
-import { DEFAULT_SETTINGS, expiredClips, normalizeCaptureShortcut, normalizeShortcut, validateSettings } from '../domain/library';
+import { DEFAULT_SETTINGS, clipsBefore, expiredClips, normalizeCaptureShortcut, normalizeShortcut, validateSettings } from '../domain/library';
 import type { Action, Library, Settings as AppSettings } from '../domain/library';
 import { desktop, setCaptureRecording as suspendCaptureShortcut, getWinV, setWinV, restartExplorer } from '../services/runtime';
 import type { WinVStatus } from '../services/runtime';
@@ -25,7 +25,7 @@ function retentionLabel(days: number | null): string {
 }
 
 /** Every change takes effect at once, as in Windows' own settings; only deleting history asks first. */
-export default function Settings({ library, act }: { library: Library; act: (action: Action) => Promise<boolean> }) {
+export default function Settings({ library, act, deleteClips }: { library: Library; act: (action: Action) => Promise<boolean>; deleteClips: (ids: string[]) => Promise<boolean> }) {
   const { confirm, dialog } = useConfirmation();
   const settings = library.settings;
   const [section, setSection] = useState<'general' | 'capture' | 'history'>('general');
@@ -62,6 +62,19 @@ export default function Settings({ library, act }: { library: Library; act: (act
     if (affected.length) await act({ type: 'prune', now: Date.now() });
     return true;
   }
+  // Cleanup by date: everything created before the start of the chosen day, kept clips excepted.
+  const [before, setBefore] = useState('');
+  const cutoff = /^\d{4}-\d{2}-\d{2}$/.test(before) ? (([year, month, day]) => new Date(year, month - 1, day).getTime())(before.split('-').map(Number)) : null;
+  const older = cutoff === null ? [] : clipsBefore(library, cutoff);
+  const keptText = settings.keepCategorized ? t("Favorites and clips in categories are kept.") : t("Favorites are kept.");
+  async function cleanUp() {
+    if (cutoff === null || !older.length) return;
+    const ids = older.map(clip => clip.id), images = older.some(clip => clip.kind === 'image');
+    const date = new Intl.DateTimeFormat(getLanguage(), { day: 'numeric', month: 'long', year: 'numeric' }).format(cutoff);
+    if (!await confirm({ title: ids.length === 1 ? t('Delete 1 clip created before {date}?', { date }) : t('Delete {count} clips created before {date}?', { count: ids.length, date }), description: [keptText, images ? '' : t("You can undo with Ctrl+Z.")].filter(Boolean).join(' ') })) return;
+    if (await deleteClips(ids)) setBefore('');
+  }
+  const today = new Date(), todayValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   const latestApply = useRef(apply); latestApply.current = apply;
   const pendingRef = useRef(pendingCapture); pendingRef.current = pendingCapture;
   // Windows has released Print Screen (checked again on focus): use the key that was waiting for it.
@@ -176,6 +189,10 @@ export default function Settings({ library, act }: { library: Library; act: (act
       </div>
       <div className="setting-row"><div><label htmlFor="keep-categorized">{t("Keep clips in categories")}</label><p id="keep-categorized-help">{t("Clips in a category are not deleted automatically.")}</p></div>
         <label className="setting-switch"><input id="keep-categorized" role="switch" type="checkbox" aria-describedby="keep-categorized-help" checked={settings.keepCategorized ?? false} onChange={event => void apply({ keepCategorized: event.target.checked }, true)} /><span aria-hidden="true">{settings.keepCategorized ? t("On") : t("Off")}</span></label>
+      </div>
+      <div className="setting-row"><div><label htmlFor="clean-before">{t("Delete clips created before")}</label><p>{keptText}</p></div>
+        <div className="setting-actions"><input id="clean-before" type="date" max={todayValue} value={before} onChange={event => setBefore(event.target.value)} />
+          <button className="subtle-button danger" disabled={!older.length} onClick={() => void cleanUp()}>{cutoff === null ? t("Delete") : older.length === 1 ? t("Delete 1 clip") : t("Delete {count} clips", { count: older.length })}</button></div>
       </div>
       <ProgramExclusions programs={settings.excludedPrograms ?? []} onChange={excludedPrograms => apply({ excludedPrograms })} />
       {desktop && <HistoryTransfer library={library} />}

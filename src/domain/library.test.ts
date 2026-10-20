@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classify, emptyLibrary, expiredClips, makeClip, normalizeShortcut, reduceLibrary, visibleClips } from './library';
+import { classify, clipsBefore, emptyLibrary, expiredClips, makeClip, normalizeShortcut, reduceLibrary, visibleClips } from './library';
 import type { Category } from './library';
 
 describe('history and categories', () => {
@@ -44,6 +44,15 @@ describe('history and categories', () => {
     expect(expiredClips(library, now).map(c => c.content)).toEqual(['gräns']);
     expect(reduceLibrary(library, { type: 'prune', now }).clips.map(c => c.content)).toEqual(['favorit', 'ny']);
     expect(expiredClips({ ...library, settings: { ...library.settings, retentionDays: null } }, now)).toEqual([]);
+  });
+
+  it('cleans up clips created before a date but keeps what the history limit keeps', () => {
+    const cutoff = 50 * 86_400_000;
+    const saved = { ...makeClip('sparad', 1), categoryIds: ['work'] };
+    const library = { ...emptyLibrary(), clips: [makeClip('gammal', 1), saved, { ...makeClip('favorit', 1), favorite: true }, makeClip('gräns', cutoff), makeClip('ny', cutoff + 1)] };
+    expect(clipsBefore(library, cutoff).map(c => c.content)).toEqual(['gammal', 'sparad']);
+    library.settings.keepCategorized = true;
+    expect(clipsBefore(library, cutoff).map(c => c.content)).toEqual(['gammal']);
   });
 
   it('keeps the content when a category is deleted and only clears the membership', () => {

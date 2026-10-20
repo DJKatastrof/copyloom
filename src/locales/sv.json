@@ -497,5 +497,16 @@
   "The image could not be saved as a file: {error}": "Bilden kunde inte sparas som fil: {error}",
   "The name must contain 1–{maximum} characters.": "Namnet behöver innehålla 1–{maximum} tecken.",
   "Couldn't create the system tray icon: {error}": "Systemfältsikonen kunde inte skapas: {error}",
-  "Couldn't create the system tray icon:": "Systemfältsikonen kunde inte skapas:"
+  "Couldn't create the system tray icon:": "Systemfältsikonen kunde inte skapas:",
+  "Delete day": "Ta bort dagen",
+  "Delete {count} clips from “{day}”?": "Ta bort {count} clips från ”{day}”?",
+  "Includes 1 favorite.": "Inklusive 1 favorit.",
+  "Includes {count} favorites.": "Inklusive {count} favoriter.",
+  "Delete clips created before": "Ta bort clips skapade före",
+  "Favorites are kept.": "Favoriter behålls.",
+  "Favorites and clips in categories are kept.": "Favoriter och clips i kategorier behålls.",
+  "Delete 1 clip": "Ta bort 1 clip",
+  "Delete {count} clips": "Ta bort {count} clips",
+  "Delete 1 clip created before {date}?": "Ta bort 1 clip skapat före {date}?",
+  "Delete {count} clips created before {date}?": "Ta bort {count} clips skapade före {date}?"
 }

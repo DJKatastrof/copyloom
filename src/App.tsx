@@ -1,6 +1,6 @@
 import { t, message, useAppLanguage } from './i18n';
 import ConfirmDialog from './components/ConfirmDialog';
-import CategoryMenu from './components/CategoryMenu';
+import ActionMenu from './components/ActionMenu';
 import { reportFrontendReady } from './services/runtime';
 import { flushSync } from 'react-dom';
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -14,7 +14,7 @@ import Select from './components/Select';
 import ClipMenu from './components/ClipMenu';
 import RenameClipDialog, { NameDialog } from './components/RenameClipDialog';
 import EditTextDialog from './components/EditTextDialog';
-import ClipList, { ClipRow, listEntries, type ListHandle } from './components/ClipList';
+import ClipList, { ClipRow, dayKey, listEntries, type ListEntry, type ListHandle } from './components/ClipList';
 import ClipPreview, { PreviewDialog } from './components/ClipPreview';
 import PanelPreview from './components/PanelPreview';
 
@@ -48,14 +48,15 @@ function focusClip(id: string | null): boolean {
 }
 
 export default function App() {
-  const [, refreshTime] = useState(0);
+  const [minute, refreshTime] = useState(0);
   useEffect(() => { const timer = window.setInterval(() => refreshTime(value => value + 1), 60000); return () => clearInterval(timer); }, []);
   const [categoryMenu, setCategoryMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [pendingCategory, setPendingCategory] = useState<Category | null>(null);
   const [renamingCategory, setRenamingCategory] = useState<Category | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
-  const [pendingRemoval, setPendingRemoval] = useState<string[] | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<{ ids: string[]; title: string; description: string } | null>(null);
+  const [dayMenu, setDayMenu] = useState<{ day: Extract<ListEntry, { type: 'day' }>; x: number; y: number } | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [listWidth, setListWidth] = useState<number | null>(storedListWidth);
   // Folded days: "fold all" is remembered; single days opened or closed against it are not.
@@ -70,7 +71,7 @@ export default function App() {
   const [dropCategory, setDropCategory] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [library, setLibrary] = useState<Library>(emptyLibrary);
-  useAppLanguage(library.settings.language ?? 'en');
+  const language = useAppLanguage(library.settings.language ?? 'en');
   const [ready, setReady] = useState(false);
   const [view, setView] = useState<View>(panelWindow || new URLSearchParams(location.search).get('view') === 'panel' ? 'panel' : 'library');
   const [page, setPage] = useState<Page>('clips');
@@ -177,7 +178,7 @@ export default function App() {
   const clips = useMemo(() => visibleClips(library, filter, searchQuery, sort), [library, filter, searchQuery, sort]);
   const grouped = sort !== 'manual' && !searchQuery.trim();
   // The panel is one run of rows; the library groups them by day.
-  const { entries, shown } = useMemo(() => view === 'library' ? listEntries(clips, grouped, key => foldAll !== foldExceptions.has(key)) : listEntries(clips, false), [view, clips, grouped, foldAll, foldExceptions]);
+  const { entries, shown } = useMemo(() => view === 'library' ? listEntries(clips, grouped, key => foldAll !== foldExceptions.has(key)) : listEntries(clips, false), [view, clips, grouped, foldAll, foldExceptions, language, minute]);
   // What the keyboard walks through: the unfolded rows.
   const listed = shown;
   const quickNumbers = useMemo(() => quickKeys && page === 'clips' ? new Map(listed.slice(0, 9).map((clip, index) => [clip.id, index + 1])) : null, [quickKeys, page, listed]);
@@ -289,7 +290,7 @@ export default function App() {
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || renamingId || editingTextId || renamingCategory || pendingRemoval || pendingCategory || categoryMenu || previewId) return;
+      if (event.defaultPrevented || renamingId || editingTextId || renamingCategory || pendingRemoval || pendingCategory || categoryMenu || dayMenu || previewId) return;
       const target = event.target as HTMLElement;
       const editing = target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target.isContentEditable;
       const onClip = target.classList.contains('clip-row');
@@ -329,7 +330,7 @@ export default function App() {
     };
     document.addEventListener('keydown', keydown);
     return () => document.removeEventListener('keydown', keydown);
-  }, [activeId, clips, listed, composer, library.settings.shortcut, reuse, undo, switchView, dismissPanel, view, page, checked, addingCategory, deleteSelected, renamingId, editingTextId, renamingCategory, pendingRemoval, pendingCategory, categoryMenu, previewId, query]);
+  }, [activeId, clips, listed, composer, library.settings.shortcut, reuse, undo, switchView, dismissPanel, view, page, checked, addingCategory, deleteSelected, renamingId, editingTextId, renamingCategory, pendingRemoval, pendingCategory, categoryMenu, dayMenu, previewId, query]);
 
   function chooseFilter(next: string) { selectionAnchor.current = null; setFilter(next); setPage('clips'); setChecked(new Set()); setActiveId(null); setSort('newest'); }
   // The copied text lands in the history as its own clip through the clipboard monitor.
@@ -352,7 +353,18 @@ export default function App() {
       if (added) { setChecked(new Set()); setActiveId(added.id); await reuse(added); }
     } catch (cause) { setNotice({ text: typeof cause === 'string' ? cause : (cause as Error).message, error: true }); }
   }
-  async function remove(ids: string[]) { if (ids.length === 1) await deleteSelected(ids); else if (ids.length) setPendingRemoval(ids); }
+  // Undo keeps a limited amount of image data, so a deletion with images does not promise it.
+  function undoHint(ids: string[]) { const removed = new Set(ids); return library.clips.some(clip => removed.has(clip.id) && clip.kind === 'image') ? '' : t("You can undo with Ctrl+Z."); }
+  async function remove(ids: string[], title = t('Delete {count} clips?', { count: ids.length }), description = '') {
+    if (ids.length === 1) await deleteSelected(ids);
+    else if (ids.length) setPendingRemoval({ ids, title, description: [description, undoHint(ids)].filter(Boolean).join(' ') });
+  }
+  // A day goes as it is listed: the clips under its heading in the current view, favorites included.
+  function removeDay(day: Extract<ListEntry, { type: 'day' }>) {
+    const under = clips.filter(clip => dayKey(clip.createdAt) === day.key), favorites = under.filter(clip => clip.favorite).length;
+    void remove(under.map(clip => clip.id), t('Delete {count} clips from “{day}”?', { count: under.length, day: day.label }),
+      favorites === 1 ? t("Includes 1 favorite.") : favorites ? t("Includes {count} favorites.", { count: favorites }) : '');
+  }
   async function reorder(source: string, target: string) {
     if (!category || query || source === target) return;
     const order = visibleClips(library, filter, '', 'manual').map(clip => clip.id);
@@ -460,7 +472,7 @@ export default function App() {
     if (latestLibrary.current.clips.find(clip => clip.id === id)?.kind !== 'image') { setEditingTextId(id); return; }
     void openEditor(id).catch(cause => setNotice({ text: String(cause), error: true }));
   }, []);
-  const renderRow = (clip: Clip) => <ClipRow clip={clip} active={clip.id === activeId} checked={checked.has(clip.id)} quickKey={quickNumbers?.get(clip.id)} grouped={view === 'library' && grouped} categories={library.categories} handlers={handlers} pictures={view === 'panel'} />;
+  const renderRow = (clip: Clip) => <ClipRow clip={clip} active={clip.id === activeId} checked={checked.has(clip.id)} quickKey={quickNumbers?.get(clip.id)} grouped={view === 'library' && grouped} categories={library.categories} handlers={handlers} pictures={view === 'panel'} language={language} minute={minute} />;
   // The panel's trash button sits beside the row, which is itself a button; it deletes without pasting.
   const renderPanelRow = (clip: Clip) => <>{renderRow(clip)}{library.settings.panelTrash !== 'off' && <button className={'row-delete' + (library.settings.panelTrash === 'hover' ? ' on-hover' : '')} aria-label={t('Delete {title}', { title: clip.title })} title={t("Delete (Del)")} onClick={() => void deleteSelected([clip.id])}><Trash2 size={15} /></button>}</>;
 
@@ -479,6 +491,7 @@ export default function App() {
     requestAnimationFrame(() => { if (!focusClip(id)) (searchRef.current ?? quickPanelRef.current)?.focus({ preventScroll: true }); });
   }
   const menuClip = contextMenu ? library.clips.find(clip => clip.id === contextMenu.id) : undefined;
+  const menuCategory = categoryMenu ? library.categories.find(category => category.id === categoryMenu.id) : undefined;
   const menuIds = menuClip ? selectedIdsFor(menuClip.id) : [];
   const previewClip = previewId ? library.clips.find(clip => clip.id === previewId) : undefined;
   useEffect(() => { if (previewId && !previewClip) setPreviewId(null); }, [previewId, previewClip]);
@@ -488,7 +501,8 @@ export default function App() {
   </> : undefined;
   const selection = checked.size > 1 ? [...checked] : null;
   return <div className={`app-shell ${view === 'panel' ? 'panel-mode' : 'library-mode'}${!desktop ? ' browser-preview' : ''}`} onPointerDown={event => { if (view === 'panel' && !desktop && !quickPanelRef.current?.contains(event.target as Node)) void dismissPanel(); }}>
-    {categoryMenu && library.categories.some(category => category.id === categoryMenu.id) && <CategoryMenu x={categoryMenu.x} y={categoryMenu.y} name={library.categories.find(category => category.id === categoryMenu.id)!.name} onClose={() => setCategoryMenu(null)} onRename={() => setRenamingCategory(library.categories.find(category => category.id === categoryMenu.id)!)} onDelete={() => setPendingCategory(library.categories.find(category => category.id === categoryMenu.id)!)} />}
+    {categoryMenu && menuCategory && <ActionMenu x={categoryMenu.x} y={categoryMenu.y} label={t("Category ") + menuCategory.name} onClose={() => setCategoryMenu(null)} items={[{ label: t("Rename"), onSelect: () => setRenamingCategory(menuCategory) }, { label: t("Delete category"), danger: true, onSelect: () => setPendingCategory(menuCategory) }]} />}
+    {dayMenu && <ActionMenu x={dayMenu.x} y={dayMenu.y} label={dayMenu.day.label} onClose={() => setDayMenu(null)} items={[{ label: t("Delete day"), danger: true, onSelect: () => removeDay(dayMenu.day) }]} />}
     {renamingClip && <RenameClipDialog key={renamingClip.id} clip={renamingClip} onClose={closeRename} onSave={async title => { update(await dispatch({ type: 'renameClip', id: renamingClip.id, title })); }} />}
     {editingText && <EditTextDialog key={editingText.id} clip={editingText} onClose={closeTextEdit} onSave={async content => { update(await dispatch({ type: 'editClip', id: editingText.id, content })); }} />}
     {renamingCategory && <NameDialog heading={t("Rename category")} initial={renamingCategory.name} maxLength={40} onClose={() => setRenamingCategory(null)} onSave={async name => { update(await dispatch({ type: 'renameCategory', id: renamingCategory.id, name })); }} />}
@@ -519,12 +533,12 @@ export default function App() {
           <details ref={moreMenuRef} className="panel-more"><summary aria-label={t("More options")} title={t("More options")}><MoreHorizontal size={18} /></summary><div className="panel-menu" onClick={event => { if ((event.target as HTMLElement).closest("button") && moreMenuRef.current) moreMenuRef.current.open = false; }}><button onClick={() => void switchView('library')}><LayoutGrid size={16} />{t("Open library")}</button><button onClick={() => { if (desktop) void changeView('settings'); else void switchView('library').then(() => setPage('settings')); }}><Settings2 size={16} />{t("Settings")}</button><button onClick={() => void act({ type: 'setPaused', value: !library.paused })}>{library.paused ? <Play size={16} /> : <Pause size={16} />}{library.paused ? t("Resume collection") : t("Pause collection")}</button><button onClick={() => { void dismissPanel(); }}><X size={16} />{t("Close panel")}</button></div></details>
         </header>}
 
-      {!ready ? <div className="loading-state" role="status">{t("Opening library…")}</div> : page === 'settings' ? <Suspense fallback={<p className="settings-loading" role="status">{t("Opening settings…")}</p>}><Settings library={library} act={act} /></Suspense> : <>
+      {!ready ? <div className="loading-state" role="status">{t("Opening library…")}</div> : page === 'settings' ? <Suspense fallback={<p className="settings-loading" role="status">{t("Opening settings…")}</p>}><Settings library={library} act={act} deleteClips={deleteSelected} /></Suspense> : <>
         {composer && <form autoComplete="off" className="composer" onSubmit={async event => { event.preventDefault(); if (await act({ type: 'addClip', clip: makeClip(newText) })) { setComposer(false); setNewText(''); chooseFilter('all'); } }}><label htmlFor="new-text">{t("Add a clip")}</label><textarea autoComplete="off" id="new-text" autoFocus placeholder={t("Type or paste text, code, a link or a color…")} value={newText} onChange={event => setNewText(event.target.value)} /><div className="form-actions"><button className="subtle-button" type="button" onClick={() => setComposer(false)}>{t("Cancel")}</button><button className="primary-button" type="submit" disabled={!newText.trim()}>{t("Add clip")}</button></div></form>}
         {view === 'library' ? <div ref={bodyRef} className="library-body">
           <div className="list-column" style={listWidth && clips.length ? { flex: `0 0 ${listWidth}px`, maxWidth: `calc(100% - ${MIN_PREVIEW}px)` } : undefined}>
             {(query || (sort === 'manual' && category)) && <div className="results-label">{query ? t('{count} search results', { count: clips.length }) : t("Drag rows to arrange them")}</div>}
-            <ClipList entries={entries} resetKey={filter + '|' + searchQuery + '|' + sort} handleRef={listHandle} renderRow={renderRow} empty={empty} onToggleDay={toggleDay} />
+            <ClipList entries={entries} resetKey={filter + '|' + searchQuery + '|' + sort} handleRef={listHandle} renderRow={renderRow} empty={empty} onToggleDay={toggleDay} onDayMenu={(day, x, y) => { setContextMenu(null); setCategoryMenu(null); setDayMenu({ day, x, y }); }} />
           </div>
           {clips.length > 0 && <div className={'pane-divider' + (resizing ? ' dragging' : '')} role="separator" aria-orientation="vertical" aria-label={t("List width")} title={t("Drag to resize. Double-click to reset.")} tabIndex={0}
             onPointerDown={event => { event.preventDefault(); dragOrigin.current = (event.currentTarget.previousElementSibling as HTMLElement).getBoundingClientRect().left; event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); }}
@@ -551,7 +565,7 @@ export default function App() {
       </>}
       {notice && <div className={'app-toast' + (notice.error ? ' error' : '')} role={notice.error ? 'alert' : 'status'}><span>{message(notice.text)}</span>{notice.undo && <button className="text-button toast-action" title={t("Undo (Ctrl+Z)")} onClick={() => { setNotice(null); void undo(); }}>{t("Undo")}</button>}<button className="icon-button" aria-label={t("Dismiss message")} onClick={() => setNotice(null)}><X size={15} /></button></div>}
     </main>
-    {pendingRemoval && <ConfirmDialog title={t('Delete {count} clips?', { count: pendingRemoval.length })} description={t("You can undo with Ctrl+Z.")} onConfirm={() => deleteSelected(pendingRemoval)} onClose={() => setPendingRemoval(null)} />}
+    {pendingRemoval && <ConfirmDialog title={pendingRemoval.title} description={pendingRemoval.description} onConfirm={() => deleteSelected(pendingRemoval.ids)} onClose={() => setPendingRemoval(null)} />}
     {view === 'library' && !desktop && <div className="preview-banner"><Folder size={14} />{t("Interface preview. Automatic collection is available in the Windows app.")}</div>}
   </div>;
 }

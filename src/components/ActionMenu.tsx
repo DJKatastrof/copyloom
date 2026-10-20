@@ -1,7 +1,8 @@
-import { t } from '../i18n';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-export default function CategoryMenu({ x, y, name, onRename, onDelete, onClose }: { x: number; y: number; name: string; onRename: () => void; onDelete: () => void; onClose: () => void }) {
+export type MenuItem = { label: string; onSelect: () => void; danger?: boolean };
+/** A small right-click menu of plain actions; destructive ones sit below a separator. */
+export default function ActionMenu({ x, y, label, items, onClose }: { x: number; y: number; label: string; items: MenuItem[]; onClose: () => void }) {
   const menu = useRef<HTMLDivElement>(null);
   const close = useRef(onClose); close.current = onClose;
   const [position, setPosition] = useState({ left: x, top: y });
@@ -16,17 +17,18 @@ export default function CategoryMenu({ x, y, name, onRename, onDelete, onClose }
     document.addEventListener('pointerdown', outside, true); window.addEventListener('blur', dismiss); window.addEventListener('resize', dismiss); window.addEventListener('scroll', dismiss, true);
     return () => { document.removeEventListener('pointerdown', outside, true); window.removeEventListener('blur', dismiss); window.removeEventListener('resize', dismiss); window.removeEventListener('scroll', dismiss, true); };
   }, []);
-  return createPortal(<div ref={menu} className="clip-context-menu" role="menu" aria-label={t("Category ") + name} style={position} onKeyDown={event => {
+  return createPortal(<div ref={menu} className="clip-context-menu" role="menu" aria-label={label} style={position} onKeyDown={event => {
     event.stopPropagation();
     if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); onClose(); return; }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
-      const items = [...menu.current!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')], index = items.indexOf(document.activeElement as HTMLButtonElement);
-      items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+      const buttons = [...menu.current!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')], index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
     }
   }}>
-    <button role="menuitem" onClick={() => { onClose(); onRename(); }}>{t("Rename")}</button>
-    <div role="separator" />
-    <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}>{t("Delete category")}</button>
+    {items.map((item, index) => <Fragment key={item.label}>
+      {item.danger && index > 0 && !items[index - 1].danger && <div role="separator" />}
+      <button role="menuitem" className={item.danger ? 'danger' : undefined} onClick={() => { onClose(); item.onSelect(); }}>{item.label}</button>
+    </Fragment>)}
   </div>, document.body);
 }

@@ -1,6 +1,6 @@
 [package]
 name = "copyloom"
-version = "0.1.38"
+version = "0.1.39"
 description = "Personlig clipboard-historik för Windows"
 license = "GPL-3.0-or-later"
 edition = "2021"

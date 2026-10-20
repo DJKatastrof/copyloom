@@ -143,7 +143,13 @@ export function validateSettings(settings: Settings): Settings {
 
 export function expiredClips(library: Library, now: number, days = library.settings.retentionDays, keepCategorized = library.settings.keepCategorized ?? false): Clip[] {
   if (days === null) return [];
-  return library.clips.filter(clip => !clip.favorite && !(keepCategorized && clip.categoryIds.length > 0) && clip.createdAt <= now - days * 86_400_000);
+  return library.clips.filter(clip => !keptByCleanup(clip, keepCategorized) && clip.createdAt <= now - days * 86_400_000);
+}
+/** Favorites, and with the setting on clips in a category, survive both the history limit and a manual cleanup. */
+function keptByCleanup(clip: Clip, keepCategorized: boolean) { return clip.favorite || (keepCategorized && clip.categoryIds.length > 0); }
+/** The clips a cleanup removes: created before `cutoff`, except those the history limit would keep too. */
+export function clipsBefore(library: Library, cutoff: number, keepCategorized = library.settings.keepCategorized ?? false): Clip[] {
+  return library.clips.filter(clip => !keptByCleanup(clip, keepCategorized) && clip.createdAt < cutoff);
 }
 
 // The same content copied again, or a clip used from the quick panel, becomes the newest clip; nothing else about it changes.

@@ -14,6 +14,8 @@ const ROW = 40, PANEL_ROW = 48, DAY = 34, OVERSCAN = 400;
 const entryHeight = (entry: ListEntry, panel: boolean) => entry.type === 'day' ? DAY : panel ? PANEL_ROW : ROW;
 
 function startOfDay(timestamp: number) { const date = new Date(timestamp); date.setHours(0, 0, 0, 0); return date.getTime(); }
+/** The heading a clip falls under: its local calendar day. */
+export const dayKey = (timestamp: number) => 'day-' + startOfDay(timestamp);
 export function dayLabel(timestamp: number, now = Date.now()): string {
   const days = Math.round((startOfDay(now) - startOfDay(timestamp)) / 86_400_000);
   if (days <= 0) return t("Today");
@@ -30,7 +32,7 @@ export function listEntries(clips: Clip[], grouped: boolean, collapsed: (key: st
   let heading = null as Extract<ListEntry, { type: 'day' }> | null;
   for (const clip of clips) {
     if (grouped) {
-      const key = 'day-' + startOfDay(clip.createdAt);
+      const key = dayKey(clip.createdAt);
       if (heading?.key !== key) { heading = { type: 'day', key, label: dayLabel(clip.createdAt, now), count: 0, collapsed: collapsed(key) }; entries.push(heading); }
       heading.count++;
       if (heading.collapsed) continue;
@@ -48,7 +50,8 @@ function rowTime(timestamp: number, grouped: boolean): string {
 
 const TYPE_ICONS = { text: Type, link: Link2, code: Code2 } as const;
 export const ClipRow = memo(function ClipRow({ clip, active, checked, quickKey, grouped, categories, handlers, pictures = false }: {
-  clip: Clip; active: boolean; checked: boolean; quickKey?: number; grouped: boolean; categories: Category[]; handlers: ClipHandlers; pictures?: boolean;
+  // Not read here: a new language or minute re-renders the memoized row so its time and labels follow.
+  clip: Clip; active: boolean; checked: boolean; quickKey?: number; grouped: boolean; categories: Category[]; handlers: ClipHandlers; pictures?: boolean; language?: string; minute?: number;
 }) {
   const kind = kindOf(clip);
   const Icon = TYPE_ICONS[kind as keyof typeof TYPE_ICONS] ?? Type;
@@ -81,9 +84,10 @@ export const ClipRow = memo(function ClipRow({ clip, active, checked, quickKey, 
 });
 
 /** One column of fixed-height rows and day headings; only what is on screen is mounted. */
-export default function ClipList({ entries, resetKey, handleRef, renderRow, empty, onToggleDay, pictures = false }: {
+export default function ClipList({ entries, resetKey, handleRef, renderRow, empty, onToggleDay, onDayMenu, pictures = false }: {
   entries: ListEntry[]; resetKey: string; handleRef: RefObject<ListHandle | null>; pictures?: boolean;
   renderRow: (clip: Clip, index: number) => ReactNode; empty: ReactNode; onToggleDay: (key: string) => void;
+  onDayMenu?: (day: Extract<ListEntry, { type: 'day' }>, x: number, y: number) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   // Which entries are mounted, and the day heading pinned at the top (-1: none). Only these are state,
@@ -134,7 +138,9 @@ export default function ClipList({ entries, resetKey, handleRef, renderRow, empt
   if (!entries.length) return <div ref={scroller} className="clip-list">{empty}</div>;
   const pinned = entries[range.sticky];
   const sticky = pinned?.type === 'day' ? pinned : undefined;
-  const heading = (day: Extract<ListEntry, { type: 'day' }>, focusable = true) => <button type="button" aria-expanded={!day.collapsed} tabIndex={focusable ? undefined : -1} onClick={() => onToggleDay(day.key)}>
+  const heading = (day: Extract<ListEntry, { type: 'day' }>, focusable = true) => <button type="button" aria-expanded={!day.collapsed} tabIndex={focusable ? undefined : -1} onClick={() => onToggleDay(day.key)}
+    onContextMenu={onDayMenu && (event => { event.preventDefault(); event.stopPropagation(); const bounds = event.currentTarget.getBoundingClientRect(); onDayMenu(day, event.clientX || bounds.left + 16, event.clientY || bounds.bottom); })}
+    onKeyDown={onDayMenu && (event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); event.stopPropagation(); const bounds = event.currentTarget.getBoundingClientRect(); onDayMenu(day, bounds.left + 16, bounds.bottom); } })}>
     <ChevronDown size={13} className="day-chevron" aria-hidden="true" />{day.label}{day.collapsed && <span className="day-count">{day.count}</span>}
   </button>;
   return <div ref={scroller} className="clip-list" tabIndex={-1}>

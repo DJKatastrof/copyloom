@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.39 – 2026-10-20
+
+- **Delete a day:** right-click a day heading in the library and choose *Delete day*. It removes the clips under that heading in the current view, favorites included, after a confirmation that says how many.
+- **Clean up by date:** Settings → History → *Delete clips created before* removes everything older than the chosen date. Favorites are kept, and so are clips in categories when *Keep clips in categories* is on.
+- Day headings and row times now switch language at once, roll over at midnight, and keep their “13 min” times current.
+
 ## 0.1.38 – 2026-10-14
 
 First public source release.
