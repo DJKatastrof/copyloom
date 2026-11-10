@@ -152,7 +152,7 @@ test('manual order can be changed with buttons and a narrow library does not ove
 test('the quick panel closes on a click outside', async ({ page }) => {
   await page.goto('/');
   await loadSamples(page);
-  await page.getByRole('button', { name: "Quick panel", exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   await page.locator('.panel-more summary').click();
   await expect(page.locator('.panel-menu')).toBeVisible();
   await page.locator('.panel-more summary').click();
@@ -166,7 +166,7 @@ test('the panel closes at once without leaving the content transparent', async (
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto('/');
   await loadSamples(page);
-  await page.getByRole('button', { name: "Quick panel", exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('heading', { name: "All clips", exact: true })).toBeVisible();
   expect(await page.locator('.main-pane').evaluate(element => getComputedStyle(element).opacity)).toBe('1');
@@ -191,7 +191,7 @@ test('a PowerCLI script shows as dark PowerShell with syntax colours', async ({ 
 test('Delete removes the selected clip in the panel; in the search field it deletes text', async ({ page }) => {
   await page.goto('/');
   await loadSamples(page);
-  await page.getByRole('button', { name: "Quick panel", exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   const rows = page.locator('.quick-panel .clip-row');
   // Walk to Violett with the arrow keys; a click would use the clip.
   for (let step = 0; step < 6 && await page.locator('.clip-row.active').getAttribute('aria-label') !== 'Show Violett'; step++) await page.keyboard.press('ArrowDown');

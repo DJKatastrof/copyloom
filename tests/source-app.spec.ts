@@ -16,7 +16,7 @@ test('rows show the copy time and app icons', async ({ page }) => {
   // The library preview names the program the clip came from.
   await expect(page.locator('.preview-meta')).toContainText('Image · Copyloom');
   await expect(page.locator('.preview-meta .preview-app')).toBeVisible();
-  await page.getByRole('button', { name: "Quick panel", exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   const image = page.locator('.quick-panel .clip-row.row-image');
   await expect(image.locator('.row-picture')).toBeVisible();
   await expect(image.locator('time')).toContainText("Just now");

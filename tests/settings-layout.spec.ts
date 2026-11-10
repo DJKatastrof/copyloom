@@ -29,7 +29,7 @@ test('settings show one group at a time and keep changes between groups', async 
 test('the panel is a small box with a thin rim and rounded corners', async ({ page }) => {
   await page.goto('/');
   await loadSamples(page);
-  await page.getByRole('button', { name: "Quick panel", exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   const panel = page.locator('.quick-panel');
   const bounds = (await panel.boundingBox())!;
   expect(bounds.width).toBe(400);

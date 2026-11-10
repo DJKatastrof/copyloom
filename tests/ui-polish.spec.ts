@@ -27,7 +27,7 @@ test('the logo is not a link and interface text cannot be selected', async ({ pa
   await expect(page.locator('a.brand')).toHaveCount(0);
   expect(await page.locator('.brand').evaluate(element => getComputedStyle(element).userSelect)).toBe('none');
   expect(await page.getByRole('textbox', { name: "Search your clips" }).evaluate(element => getComputedStyle(element).userSelect)).toBe('text');
-  await page.getByRole('button', { name: "Quick panel", exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   await page.locator('.quick-panel').focus();
   expect(await page.locator('.quick-panel').evaluate(element => getComputedStyle(element).outlineStyle)).toBe('none');
 });

@@ -43,6 +43,8 @@ export interface Settings {
   panelClick?: 'single' | 'double';
   /** The trash button on the quick panel's rows: always shown (default), on hover, or off. */
   panelTrash?: 'always' | 'hover' | 'off';
+  /** Look for a new version once a day (default on); installing always waits for the user. */
+  checkUpdates?: boolean;
 }
 
 export interface Library {
@@ -130,6 +132,7 @@ export function validateSettings(settings: Settings): Settings {
   if (settings.captureBehavior !== undefined && !['copy', 'edit', 'choose'].includes(settings.captureBehavior)) throw new Error('Invalid action after screenshot.');
   if (settings.editAfterCapture !== undefined && typeof settings.editAfterCapture !== 'boolean') throw new Error('Invalid editor setting after screenshot.');
   if (settings.pasteDirectly !== undefined && typeof settings.pasteDirectly !== 'boolean') throw new Error('Invalid paste setting.');
+  if (settings.checkUpdates !== undefined && typeof settings.checkUpdates !== 'boolean') throw new Error('Invalid update setting.');
   const shortcut = normalizeShortcut(settings.shortcut);
   const captureShortcut = settings.captureShortcut ? normalizeCaptureShortcut(settings.captureShortcut) : null;
   if (captureShortcut === shortcut || (settings.winV && captureShortcut === 'Super+V')) throw new Error('The panel and screenshot need different shortcuts.');

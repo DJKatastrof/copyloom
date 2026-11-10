@@ -1,7 +1,7 @@
 import { t, message, getLanguage } from '../i18n';
 import { useConfirmation } from './ConfirmDialog';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { Check, RotateCcw } from 'lucide-react';
 import { DEFAULT_SETTINGS, clipsBefore, expiredClips, normalizeCaptureShortcut, normalizeShortcut, validateSettings } from '../domain/library';
 import type { Action, Library, Settings as AppSettings } from '../domain/library';
 import { desktop, setCaptureRecording as suspendCaptureShortcut, getWinV, setWinV, restartExplorer } from '../services/runtime';
@@ -10,8 +10,8 @@ import AutostartSettings from './AutostartSettings';
 import type { StartMode } from './AutostartSettings';
 import CaptureWarning from './CaptureWarning';
 import { version } from '../../package.json';
-import { getAutostart, setAutostart, getCaptureEnvironment } from '../services/runtime';
-import type { AutostartStatus } from '../services/runtime';
+import { getAutostart, setAutostart, getCaptureEnvironment, getUpdate, checkForUpdate, installUpdate, subscribeUpdate } from '../services/runtime';
+import type { AutostartStatus, UpdateInfo } from '../services/runtime';
 import Select from './Select';
 import HistoryTransfer from './HistoryTransfer';
 import ProgramExclusions from './ProgramExclusions';
@@ -24,10 +24,13 @@ function retentionLabel(days: number | null): string {
   return t('{count} days', { count: days });
 }
 
-/** Every change takes effect at once, as in Windows' own settings; only deleting history asks first. */
+/** Changes apply directly, except shorter retention and actions that delete history. */
 export default function Settings({ library, act, deleteClips }: { library: Library; act: (action: Action) => Promise<boolean>; deleteClips: (ids: string[]) => Promise<boolean> }) {
   const { confirm, dialog } = useConfirmation();
   const settings = library.settings;
+  const [customRetention, setCustomRetention] = useState(settings.retentionDays !== null && !RETENTION.includes(settings.retentionDays));
+  const [retentionDraft, setRetentionDraft] = useState(String(settings.retentionDays ?? 30));
+  const [retentionBusy, setRetentionBusy] = useState(false);
   const [section, setSection] = useState<'general' | 'capture' | 'history'>('general');
   const [recording, setRecording] = useState<'panel' | 'capture' | null>(null);
   const [error, setError] = useState('');
@@ -39,6 +42,27 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
   const [pendingCapture, setPendingCapture] = useState<string | null>(null);
   const [winV, setWinVStatus] = useState<WinVStatus | null>(null);
   const [winVBusy, setWinVBusy] = useState(false);
+  // 'current' after a check that found nothing newer; a found update replaces it.
+  const [newVersion, setNewVersion] = useState<UpdateInfo | null>(null);
+  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'current' | 'downloading'>('idle');
+  const [updateError, setUpdateError] = useState('');
+  useEffect(() => {
+    if (!desktop) return;
+    let off: (() => void) | null = null, disposed = false;
+    void getUpdate().then(found => { if (!disposed && found) setNewVersion(found); }, () => {});
+    void subscribeUpdate(setNewVersion).then(unlisten => { if (disposed) unlisten(); else off = unlisten; }, () => {});
+    return () => { disposed = true; off?.(); };
+  }, []);
+  async function checkNow() {
+    setUpdateState('checking'); setUpdateError('');
+    try { const found = await checkForUpdate(); setNewVersion(found); setUpdateState(found ? 'idle' : 'current'); }
+    catch (cause) { setUpdateError(String(cause)); setUpdateState('idle'); }
+  }
+  async function installNow() {
+    setUpdateState('downloading'); setUpdateError('');
+    try { await installUpdate(); }
+    catch (cause) { setUpdateError(String(cause)); setUpdateState('idle'); }
+  }
   useEffect(() => { if (desktop) void getWinV().then(setWinVStatus).catch(() => {}); }, [settings.winV]);
   useEffect(() => {
     if (!desktop) return;
@@ -57,7 +81,16 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
     let next: AppSettings;
     try { next = validateSettings({ ...settings, ...update }); } catch (cause) { setError((cause as Error).message); return false; }
     const affected = expiry ? expiredClips(library, Date.now(), next.retentionDays, next.keepCategorized ?? false) : [];
-    if (affected.length && !await confirm({ title: t("Change how long clips are kept?"), description: affected.length + t(" clips will be deleted. Favorites will be kept."), confirmLabel: t("Change and delete") })) return false;
+    const shorter = next.retentionDays !== null && (settings.retentionDays === null || next.retentionDays < settings.retentionDays);
+    if (expiry && (shorter || affected.length)) {
+      const deletion = affected.length === 0 ? t("No clips will be deleted now.") : affected.length === 1 ? t("1 clip will be deleted now.") : t("{count} clips will be deleted now.", { count: affected.length });
+      const description = [
+        t("Clips older than {period} will be deleted automatically.", { period: retentionLabel(next.retentionDays) }),
+        deletion,
+        next.keepCategorized ? t("Favorites and clips in categories are kept.") : t("Favorites are kept."),
+      ].join(' ');
+      if (!await confirm({ title: t("Change how long clips are kept?"), description, confirmLabel: affected.length ? t("Change and delete") : t("Change retention"), destructive: affected.length > 0, dismissOnBackdrop: false })) return false;
+    }
     if (!await act({ type: 'setSettings', settings: next })) return false;
     if (affected.length) await act({ type: 'prune', now: Date.now() });
     return true;
@@ -138,6 +171,20 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
   }
   const retention = settings.retentionDays;
   const retentionOptions = [...new Set([...RETENTION, ...(retention !== null ? [retention] : [])])].sort((a, b) => a - b).map(days => ({ value: String(days), label: retentionLabel(days) }));
+  const draftDays = Number(retentionDraft);
+  const validRetention = retentionDraft.trim() !== '' && Number.isInteger(draftDays) && draftDays >= 1 && draftDays <= 36500;
+  async function chooseRetention(value: string) {
+    if (value === 'custom') { setCustomRetention(true); setRetentionDraft(String(retention ?? 30)); return; }
+    setRetentionBusy(true);
+    try { if (await apply({ retentionDays: value === 'forever' ? null : Number(value) }, true)) setCustomRetention(false); }
+    finally { setRetentionBusy(false); }
+  }
+  async function saveRetention() {
+    if (!validRetention || retentionBusy || draftDays === retention) return;
+    setRetentionBusy(true);
+    try { await apply({ retentionDays: draftDays }, true); }
+    finally { setRetentionBusy(false); }
+  }
   const captureLabel = (key: string | null | undefined) => key ? key.replace('PrintScreen', 'Print Screen').replace('Super', 'Win') : t("Off");
 
   return <div className="settings-content">{dialog}
@@ -167,6 +214,16 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
       <section className="settings-section"><h2>{t("Startup")}</h2>
         <AutostartSettings status={autostart} minimized={!!settings.startMinimized} busy={autostartBusy} error={autostartError} onChange={mode => void chooseStart(mode)} onRepair={() => void chooseStart(settings.startMinimized ? 'tray' : 'library')} onRetry={() => setReload(value => value + 1)} />
       </section>
+      <section className="settings-section"><h2>{t("Updates")}</h2>
+        <div className="setting-row"><div><label htmlFor="check-updates">{t("Check for updates")}</label><p id="check-updates-help">{t("Once a day, on GitHub.")}</p></div>
+          <label className="setting-switch"><input id="check-updates" role="switch" type="checkbox" aria-describedby="check-updates-help" disabled={!desktop} checked={settings.checkUpdates ?? true} onChange={event => void apply({ checkUpdates: event.target.checked })} /><span aria-hidden="true">{settings.checkUpdates ?? true ? t("On") : t("Off")}</span></label>
+        </div>
+        <div className="setting-row"><div><label>{t("New version")}</label><p>{!desktop ? t("Available in the Windows app.") : newVersion ? t('Copyloom {version} is available.', { version: newVersion.version }) : updateState === 'current' ? t("You have the latest version.") : t('You have Copyloom {version}.', { version })}</p></div>
+          {newVersion ? <button className="text-button" disabled={updateState === 'downloading'} onClick={() => void installNow()}>{updateState === 'downloading' ? t("Downloading…") : t('Update to {version}', { version: newVersion.version })}</button>
+            : <button className="text-button" disabled={!desktop || updateState === 'checking'} onClick={() => void checkNow()}>{updateState === 'checking' ? t("Checking…") : t("Check now")}</button>}
+        </div>
+        {updateError && <p className="inline-error" role="alert">{message(updateError)}</p>}
+      </section>
       <section className="settings-section"><h2>{t("Appearance")}</h2>
         <div className="setting-row"><label htmlFor="theme">{t("Theme")}</label><Select id="theme" label={t("Theme")} value={settings.theme} onChange={value => void apply({ theme: value as AppSettings["theme"] })} options={[{ value: "system", label: t("Follow Windows") }, { value: "light", label: t("Light") }, { value: "dark", label: t("Dark") }]} /></div>
         <div className="setting-row"><label htmlFor="language">{t("Language")}</label><Select id="language" label={t("Language")} value={settings.language ?? 'en'} onChange={value => void apply({ language: value as 'en' | 'sv' })} options={[{ value: 'en', label: 'English' }, { value: 'sv', label: 'Svenska' }]} /></div>
@@ -185,7 +242,12 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
     </section>}
     {section === 'history' && <section className="settings-section"><h2>{t("History")}</h2>
       <div className="setting-row"><div><label htmlFor="retention">{t("Keep clips for")}</label><p>{t("Favorites stay until you delete them.")}</p></div>
-        <Select id="retention" label={t("Keep clips for")} value={retention === null ? 'forever' : String(retention)} onChange={value => void apply({ retentionDays: value === 'forever' ? null : Number(value) }, true)} options={[...retentionOptions, { value: 'forever', label: retentionLabel(null) }]} />
+        <div className="retention-controls"><Select id="retention" label={t("Keep clips for")} disabled={retentionBusy} value={customRetention ? 'custom' : retention === null ? 'forever' : String(retention)} onChange={value => void chooseRetention(value)} options={[...retentionOptions, { value: 'forever', label: retentionLabel(null) }, { value: 'custom', label: t("Custom") }]} />
+          {customRetention && <form className="retention-custom" onSubmit={event => { event.preventDefault(); void saveRetention(); }}>
+            <input type="number" aria-label={t("Number of days")} min={1} max={36500} step={1} required value={retentionDraft} disabled={retentionBusy} onChange={event => setRetentionDraft(event.target.value)} />
+            <span>{t("days")}</span><button className="icon-button" type="submit" aria-label={t("Save")} title={t("Save")} disabled={retentionBusy || !validRetention || draftDays === retention}><Check size={17} /></button>
+          </form>}
+        </div>
       </div>
       <div className="setting-row"><div><label htmlFor="keep-categorized">{t("Keep clips in categories")}</label><p id="keep-categorized-help">{t("Clips in a category are not deleted automatically.")}</p></div>
         <label className="setting-switch"><input id="keep-categorized" role="switch" type="checkbox" aria-describedby="keep-categorized-help" checked={settings.keepCategorized ?? false} onChange={event => void apply({ keepCategorized: event.target.checked }, true)} /><span aria-hidden="true">{settings.keepCategorized ? t("On") : t("Off")}</span></label>

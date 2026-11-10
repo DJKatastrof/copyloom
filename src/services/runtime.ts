@@ -143,6 +143,20 @@ export async function setAutostart(enabled: boolean): Promise<AutostartStatus> {
   return invoke("set_autostart", { enabled });
 }
 
+/** A newer Copyloom on GitHub Releases, found by the daily check or by checkForUpdate. */
+export type UpdateInfo = { version: string };
+export async function getUpdate(): Promise<UpdateInfo | null> { return desktop ? invoke('get_update') : null; }
+export async function checkForUpdate(): Promise<UpdateInfo | null> {
+  if (!desktop) throw new Error('Updates are available in the Windows app.');
+  return invoke('check_for_update');
+}
+/** Downloads and starts the installer; Copyloom then exits and the installer starts the new version. */
+export async function installUpdate(): Promise<void> { await invoke('install_update'); }
+export async function subscribeUpdate(callback: (update: UpdateInfo) => void): Promise<() => void> {
+  if (!desktop) return () => {};
+  return listen<UpdateInfo>('update:available', event => callback(event.payload));
+}
+
 export async function reportFrontendReady(): Promise<void> {
   if (desktop) await invoke('frontend_ready');
 }

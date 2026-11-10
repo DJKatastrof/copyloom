@@ -3,7 +3,7 @@ import { loadSamples } from '../scripts/test-samples.mjs';
 
 test('Space previews the whole clip in the panel; arrows change clip, Enter uses it', async ({ page }) => {
   await page.goto('/'); await loadSamples(page);
-  await page.getByRole('button', { name: 'Quick panel', exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   const panel = page.locator('.quick-panel');
   await page.keyboard.press(' ');
   const preview = page.getByRole('dialog', { name: /^Preview / });
@@ -40,7 +40,7 @@ test('with double-click chosen, a click in the panel selects and a double-click 
   await click.click(); await page.getByRole('option', { name: 'Double-click', exact: true }).click();
   await expect(click).toContainText('Double-click');
   await page.getByRole('navigation', { name: 'Library', exact: true }).getByRole('button', { name: /All clips/ }).click();
-  await page.getByRole('button', { name: 'Quick panel', exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   const row = page.locator('.quick-panel .clip-row').nth(2);
   await row.click();
   await expect(row).toHaveClass(/active/);

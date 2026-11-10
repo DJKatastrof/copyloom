@@ -22,7 +22,7 @@ test('a clip used from the panel moves to the top; in the library it stays where
   await page.getByRole('button', { name: 'Show Grönt', exact: true }).dblclick();
   await expect(page.locator('.app-toast')).toContainText('Copied');
   await expect(page.locator('.clip-row').last()).toHaveAttribute('aria-label', 'Show Grönt');
-  await page.getByRole('button', { name: "Quick panel", exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   await page.locator('.quick-panel .clip-row').last().click();
   await expect.poll(async () => (await contents(page))[0]).toBe('#33836A');
 });
@@ -82,6 +82,12 @@ test('days fold one at a time or all at once; a search still shows everything', 
   });
   const rows = page.locator('.clip-row');
   await expect(rows).toHaveCount(5);
+  const toolbar = page.locator('.list-column .list-toolbar');
+  await expect(toolbar.getByRole('button', { name: 'Collapse all days', exact: true })).toBeVisible();
+  await expect(toolbar.getByRole('combobox', { name: 'Sort clips' })).toBeVisible();
+  const toolbarBox = (await toolbar.boundingBox())!, listBox = (await page.locator('.clip-list').boundingBox())!;
+  expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(listBox.y);
+  await expect(page.locator('.library-header').getByRole('combobox', { name: 'Sort clips' })).toHaveCount(0);
   // A folded heading also tells how many clips it holds, so match on its label.
   const day = (label: string) => page.locator('.day-heading button').filter({ hasText: label });
   const yesterday = day('Yesterday');

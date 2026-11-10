@@ -4,10 +4,11 @@ import ActionMenu from './components/ActionMenu';
 import { reportFrontendReady } from './services/runtime';
 import { flushSync } from 'react-dom';
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowDownUp, ArrowUp, Check, ChevronsDownUp, ChevronsUpDown, Clipboard, Copy, Folder, LayoutGrid, MoreHorizontal, PanelBottom, Pause, Play, Plus, Search, Settings2, Star, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowDownUp, ArrowUp, Check, ChevronsDownUp, ChevronsUpDown, Clipboard, Copy, Folder, LayoutGrid, MoreHorizontal, Pause, Play, Plus, Search, Settings2, Star, Trash2, X } from 'lucide-react';
 import type { Action, Category, Clip, Library } from './domain/library';
 import { CATEGORY_COLORS, emptyLibrary, makeClip, normalizeShortcut, visibleClips } from './domain/library';
-import { changeView, copyClip, copyImageText, openEditor, saveClipImage, undoDelete, canUndoDelete, desktop, panelWindow, dispatch, hidePanel, dragPanel, resizePanel, loadLibrary, subscribeErrors, subscribeLibrary, subscribeView, subscribePanelMotion, finishHidePanel, showPanel } from './services/runtime';
+import { changeView, copyClip, copyImageText, openEditor, saveClipImage, undoDelete, canUndoDelete, desktop, panelWindow, dispatch, hidePanel, dragPanel, resizePanel, loadLibrary, subscribeErrors, subscribeLibrary, subscribeView, subscribePanelMotion, finishHidePanel, showPanel, getUpdate, subscribeUpdate, installUpdate } from './services/runtime';
+import type { UpdateInfo } from './services/runtime';
 import { ClipContent, type ClipHandlers } from './components/ClipCard';
 const Settings = lazy(() => import('./components/Settings'));
 import Select from './components/Select';
@@ -83,9 +84,9 @@ export default function App() {
   const [addingCategory, setAddingCategory] = useState(false);
   const [composer, setComposer] = useState(false);
   const [newText, setNewText] = useState('');
-  const [notice, setNotice] = useState<{ text: string; error: boolean; undo?: boolean } | null>(null);
-  // An undo offer stays long enough to read and reach; other confirmations are brief.
-  useEffect(() => { if (!notice || notice.error) return; const timer = window.setTimeout(() => setNotice(null), notice.undo ? 8000 : 3500); return () => clearTimeout(timer); }, [notice]);
+  const [notice, setNotice] = useState<{ text: string; error: boolean; undo?: boolean; update?: 'offer' | 'downloading' } | null>(null);
+  // An undo offer stays long enough to read and reach; other confirmations are brief. An update offer waits to be seen.
+  useEffect(() => { if (!notice || notice.error || notice.update) return; const timer = window.setTimeout(() => setNotice(null), notice.undo ? 8000 : 3500); return () => clearTimeout(timer); }, [notice]);
   // Ctrl held on its own for a moment shows 1–9 on the first clips; a quick Ctrl+click or Ctrl+1 shows nothing.
   const [quickKeys, setQuickKeys] = useState(false);
   useEffect(() => {
@@ -99,6 +100,25 @@ export default function App() {
     document.addEventListener('keydown', down); document.addEventListener('keyup', up); document.addEventListener('pointerdown', hide, true); window.addEventListener('blur', hide);
     return () => { hide(); document.removeEventListener('keydown', down); document.removeEventListener('keyup', up); document.removeEventListener('pointerdown', hide, true); window.removeEventListener('blur', hide); };
   }, []);
+  // The library offers a new version once per session; Settings → General keeps the offer afterwards.
+  const offeredUpdate = useRef('');
+  useEffect(() => {
+    if (!desktop || panelWindow) return;
+    const offer = (found: UpdateInfo | null) => {
+      if (!found || offeredUpdate.current === found.version) return;
+      offeredUpdate.current = found.version;
+      setNotice({ text: t('Copyloom {version} is available.', { version: found.version }), error: false, update: 'offer' });
+    };
+    let off: (() => void) | null = null, disposed = false;
+    void subscribeUpdate(offer).then(unlisten => { if (disposed) unlisten(); else off = unlisten; }, () => {});
+    void getUpdate().then(offer, () => {});
+    return () => { disposed = true; off?.(); };
+  }, []);
+  async function installNewVersion() {
+    setNotice({ text: t("Downloading the update…"), error: false, update: 'downloading' });
+    try { await installUpdate(); }
+    catch (cause) { setNotice({ text: typeof cause === 'string' ? cause : (cause as Error).message, error: true }); }
+  }
   const searchRef = useRef<HTMLInputElement>(null);
   const listHandle = useRef<ListHandle>(null);
   const quickPanelRef = useRef<HTMLElement>(null);
@@ -523,10 +543,6 @@ export default function App() {
       {view === 'library' ? page === 'settings' ? <header className="main-header"><h1>{t("Settings")}</h1></header>
         : <header className="library-header"><h1 className="sr-only">{title}</h1>{search}<div className="toolbar-right">
           {library.paused && <button className="paused-chip" title={t("Resume collection")} onClick={() => void act({ type: 'setPaused', value: false })}><Pause size={13} />{t("Collection paused")}<span>{t("Resume")}</span></button>}
-          {grouped && clips.length > 0 && <button className="icon-button" aria-label={foldAll ? t("Expand all days") : t("Collapse all days")} title={foldAll ? t("Expand all days") : t("Collapse all days")} onClick={() => foldEveryDay(!foldAll)}>{foldAll ? <ChevronsUpDown size={17} /> : <ChevronsDownUp size={17} />}</button>}
-          <div className="sort-control"><ArrowDownUp size={16} /><Select label={t("Sort clips")} value={sort} onChange={value => setSort(value as typeof sort)} options={[{ value: "newest", label: t("Newest first") }, { value: "oldest", label: t("Oldest first") }, ...(category ? [{ value: "manual", label: t("Custom order") }] : [])]} /></div>
-          <button className="icon-button" aria-label={t("Add")} title={t("Add text")} aria-expanded={composer} onClick={() => setComposer(!composer)}><Plus size={18} /></button>
-          <button className="subtle-button" onClick={() => void switchView('panel')}><PanelBottom size={16} />{t("Quick panel")}</button>
         </div></header>
         : <header className="panel-head" title={desktop ? t("Drag to move the panel") : undefined} onPointerDown={event => { if (event.target === event.currentTarget && event.button === 0) void dragPanel(); }}>{search}
           <Select label={t("Filter quick panel")} value={filter} onChange={chooseFilter} options={[{ value: 'all', label: t("All clips") }, { value: 'favorites', label: t("Favorites") }, ...library.categories.map(category => ({ value: category.id, label: category.name }))]} />
@@ -537,6 +553,10 @@ export default function App() {
         {composer && <form autoComplete="off" className="composer" onSubmit={async event => { event.preventDefault(); if (await act({ type: 'addClip', clip: makeClip(newText) })) { setComposer(false); setNewText(''); chooseFilter('all'); } }}><label htmlFor="new-text">{t("Add a clip")}</label><textarea autoComplete="off" id="new-text" autoFocus placeholder={t("Type or paste text, code, a link or a color…")} value={newText} onChange={event => setNewText(event.target.value)} /><div className="form-actions"><button className="subtle-button" type="button" onClick={() => setComposer(false)}>{t("Cancel")}</button><button className="primary-button" type="submit" disabled={!newText.trim()}>{t("Add clip")}</button></div></form>}
         {view === 'library' ? <div ref={bodyRef} className="library-body">
           <div className="list-column" style={listWidth && clips.length ? { flex: `0 0 ${listWidth}px`, maxWidth: `calc(100% - ${MIN_PREVIEW}px)` } : undefined}>
+            <div className="list-toolbar">
+              {grouped && clips.length > 0 && <button className="icon-button" aria-label={foldAll ? t("Expand all days") : t("Collapse all days")} title={foldAll ? t("Expand all days") : t("Collapse all days")} onClick={() => foldEveryDay(!foldAll)}>{foldAll ? <ChevronsUpDown size={17} /> : <ChevronsDownUp size={17} />}</button>}
+              <div className="sort-control"><ArrowDownUp size={16} /><Select label={t("Sort clips")} value={sort} onChange={value => setSort(value as typeof sort)} options={[{ value: "newest", label: t("Newest first") }, { value: "oldest", label: t("Oldest first") }, ...(category ? [{ value: "manual", label: t("Custom order") }] : [])]} /></div>
+            </div>
             {(query || (sort === 'manual' && category)) && <div className="results-label">{query ? t('{count} search results', { count: clips.length }) : t("Drag rows to arrange them")}</div>}
             <ClipList entries={entries} resetKey={filter + '|' + searchQuery + '|' + sort} handleRef={listHandle} renderRow={renderRow} empty={empty} onToggleDay={toggleDay} onDayMenu={(day, x, y) => { setContextMenu(null); setCategoryMenu(null); setDayMenu({ day, x, y }); }} />
           </div>
@@ -563,7 +583,7 @@ export default function App() {
               onPointerUp={event => { event.currentTarget.releasePointerCapture(event.pointerId); gripOrigin.current = null; }} />}
             {previewClip && <PanelPreview clip={previewClip} onClose={closePanelPreview} onMove={movePreview} onUse={plain => { setPreviewId(null); void reuse(previewClip, plain); }} />}</>}
       </>}
-      {notice && <div className={'app-toast' + (notice.error ? ' error' : '')} role={notice.error ? 'alert' : 'status'}><span>{message(notice.text)}</span>{notice.undo && <button className="text-button toast-action" title={t("Undo (Ctrl+Z)")} onClick={() => { setNotice(null); void undo(); }}>{t("Undo")}</button>}<button className="icon-button" aria-label={t("Dismiss message")} onClick={() => setNotice(null)}><X size={15} /></button></div>}
+      {notice && <div className={'app-toast' + (notice.error ? ' error' : '')} role={notice.error ? 'alert' : 'status'}><span>{message(notice.text)}</span>{notice.undo && <button className="text-button toast-action" title={t("Undo (Ctrl+Z)")} onClick={() => { setNotice(null); void undo(); }}>{t("Undo")}</button>}{notice.update === 'offer' && <button className="text-button toast-action" onClick={() => void installNewVersion()}>{t("Update")}</button>}<button className="icon-button" aria-label={t("Dismiss message")} onClick={() => setNotice(null)}><X size={15} /></button></div>}
     </main>
     {pendingRemoval && <ConfirmDialog title={pendingRemoval.title} description={pendingRemoval.description} onConfirm={() => deleteSelected(pendingRemoval.ids)} onClose={() => setPendingRemoval(null)} />}
     {view === 'library' && !desktop && <div className="preview-banner"><Folder size={14} />{t("Interface preview. Automatic collection is available in the Windows app.")}</div>}

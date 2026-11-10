@@ -33,7 +33,6 @@ test('10,000 clips: loading, search and panel', async ({ page }) => {
   await page.locator('.clip-list').evaluate(element => { element.scrollTop = element.scrollHeight; });
   await expect(page.getByRole('button', { name: 'Show Unik slutanteckning', exact: true })).toBeVisible();
   expect(await page.locator('.clip-row').count()).toBeLessThan(100);
-  await page.getByRole('button', { name: "Quick panel", exact: true }).click();
   // Native mock does not emit view events; render through the normal query entry.
   await page.goto('/?view=panel');
   await expect(page.locator('.quick-panel .clip-row').first()).toBeVisible();

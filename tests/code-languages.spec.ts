@@ -34,7 +34,7 @@ for (const theme of ['light', 'dark'] as const) {
     await row('Okänd kod').click(); await expect(meta).toContainText('Code');
     await row('SQL script').click();
     await page.screenshot({ path: '.impeccable/review/languages-library-' + theme + '.png' });
-    await page.getByRole('button', { name: "Quick panel", exact: true }).click();
+    await page.keyboard.press('Control+Shift+v');
     const panel = page.locator('.quick-panel');
     const inPanel = (name: string) => panel.getByRole('button', { name: 'Show ' + name, exact: true });
     await expect(inPanel('SQL script')).toHaveClass(/row-code/);

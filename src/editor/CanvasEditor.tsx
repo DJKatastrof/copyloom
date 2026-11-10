@@ -25,6 +25,7 @@ type Props = {
   onZoom: (zoom: number) => void; cache: PixelCache;
 };
 type Gesture = { mode: 'draw' | 'move' | 'resize' | 'pan'; start: Point; screen: Point; shape?: Shape; handle?: Handle; initial: Shape[]; view: Viewport; moved: boolean };
+const handleCursors: Record<Handle, string> = { nw: 'nwse-resize', n: 'ns-resize', ne: 'nesw-resize', e: 'ew-resize', se: 'nwse-resize', s: 'ns-resize', sw: 'nesw-resize', w: 'ew-resize', start: 'move', end: 'move' };
 
 export default forwardRef<CanvasHandle, Props>(function CanvasEditor(props, ref) {
   const stage = useRef<HTMLDivElement>(null), base = useRef<HTMLCanvasElement>(null), overlay = useRef<HTMLCanvasElement>(null), textarea = useRef<HTMLTextAreaElement>(null);
@@ -37,11 +38,12 @@ export default forwardRef<CanvasHandle, Props>(function CanvasEditor(props, ref)
     return snapView({ ...adjusted, x: adjusted.x - crop.x * adjusted.zoom, y: adjusted.y - crop.y * adjusted.zoom }, pixelRatio());
   });
   const [preview, setPreview] = useState<Shape[] | null>(null), [space, setSpace] = useState(false);
+  const [cursor, setCursor] = useState('default'), pointer = useRef<Point | null>(null);
   const gesture = useRef<Gesture | null>(null), frame = useRef(0), nextPoint = useRef<Point | null>(null), metrics = useRef<number[]>([]);
   const current = useRef({ props, view, area }); current.current = { props, view, area };
   const previewRef = useRef<Shape[] | null>(null);
   const crop = imageBounds(props.image, props.shapes), cropKey = JSON.stringify(crop);
-  const pixelGeometry = JSON.stringify((preview ?? props.shapes).filter(shape => shape.kind === 'pixelate' && gesture.current?.shape?.id !== shape.id).map(shape => [shape.x1, shape.y1, shape.x2, shape.y2]));
+  const pixelGeometry = JSON.stringify((preview ?? props.shapes).filter(shape => shape.kind === 'pixelate').map(shape => [shape.x1, shape.y1, shape.x2, shape.y2]));
   function showPreview(shapes: Shape[] | null) { previewRef.current = shapes; setPreview(shapes); }
   function fit() { const p = current.current, crop = imageBounds(p.props.image, p.props.shapes), fitted = fitView(crop.width, crop.height, p.area, 1 / pixelRatio()); setView({ ...fitted, x: fitted.x - crop.x * fitted.zoom, y: fitted.y - crop.y * fitted.zoom }); }
   useImperativeHandle(ref, () => ({ fit, zoomTo: scale => setView(v => zoomAt(v, { x: area.width / 2, y: area.height / 2 }, scale / pixelRatio())), view: () => view, metrics: () => ({ frames: metrics.current.slice() }) }), [view, area]);
@@ -81,11 +83,7 @@ export default forwardRef<CanvasHandle, Props>(function CanvasEditor(props, ref)
     deviceTransform(ctx, view);
     ctx.save(); ctx.beginPath(); ctx.rect(crop.x, crop.y, crop.width, crop.height); ctx.clip();
     const shapes = preview ?? props.shapes;
-    for (const shape of paintOrder(shapes)) if (shape.id !== props.editing?.id) {
-      // Rebuild the pixel grid on release; during a gesture the outline stays responsive.
-      const drawing = shape.kind === 'pixelate' && gesture.current?.shape?.id === shape.id ? { ...shape, kind: 'rectangle' as const, color: '#00a9e6' } : shape;
-      drawShape(ctx, drawing, props.image, props.cache);
-    }
+    for (const shape of paintOrder(shapes)) if (shape.id !== props.editing?.id) drawShape(ctx, shape, props.image, props.cache);
     ctx.restore();
     const draft = gesture.current?.shape?.kind === 'crop' ? preview?.find(shape => shape.id === gesture.current?.shape?.id) : props.cropDraft;
     if (draft) {
@@ -106,7 +104,7 @@ export default forwardRef<CanvasHandle, Props>(function CanvasEditor(props, ref)
   useEffect(() => {
     const down = (event: KeyboardEvent) => { if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLButtonElement || document.querySelector('dialog[open]')) return; if (event.code === 'Space') { event.preventDefault(); setSpace(true); } };
     const up = (event: KeyboardEvent) => { if (event.code === 'Space') setSpace(false); };
-    const cancel = () => { setSpace(false); gesture.current = null; showPreview(null); };
+    const cancel = () => { setSpace(false); gesture.current = null; pointer.current = null; setCursor('default'); showPreview(null); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', cancel);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', cancel); cancelAnimationFrame(frame.current); };
   }, []);
@@ -123,30 +121,52 @@ export default forwardRef<CanvasHandle, Props>(function CanvasEditor(props, ref)
   }, []);
   function local(event: { clientX: number; clientY: number }) { const r = stage.current!.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; }
   function imagePoint(screen: Point, v = view) { const p = toImage(screen, v); return { x: clamp(p.x, crop.x, crop.x + crop.width), y: clamp(p.y, crop.y, crop.y + crop.height) }; }
+  function targetAt(point: Point): { shape: Shape; handle?: Handle } | null {
+    if (point.x < crop.x || point.y < crop.y || point.x > crop.x + crop.width || point.y > crop.y + crop.height) return null;
+    if (props.tool === 'crop' && props.cropDraft) {
+      const shape = props.cropDraft, handle = hitHandle(shape, point, view.zoom);
+      return handle || hitTest(shape, point, 0) ? { shape, handle } : null;
+    }
+    const selected = props.shapes.find(shape => shape.id === props.selected);
+    const handle = selected && (props.tool === 'select' || props.tool === selected.kind) ? hitHandle(selected, point, view.zoom) : undefined;
+    if (selected && handle) return { shape: selected, handle };
+    const shape = props.tool === 'select'
+      ? [...props.shapes].reverse().find(shape => shape.kind !== 'crop' && hitTest(shape, point, 5 / view.zoom))
+      : props.tool === 'pixelate' && selected?.kind === 'pixelate' && hitTest(selected, point, 0) ? selected : undefined;
+    return shape ? { shape } : null;
+  }
+  function updateCursor() {
+    const drag = gesture.current;
+    let next = props.tool === 'select' ? 'default' : 'crosshair';
+    if (props.disabled || props.editing) next = 'default';
+    else if (drag?.mode === 'pan') next = 'grabbing';
+    else if (drag?.mode === 'resize') next = handleCursors[drag.handle!];
+    else if (drag?.mode === 'move') next = 'move';
+    else if (!drag) {
+      const target = pointer.current && targetAt(toImage(pointer.current, view));
+      if (space) next = 'grab';
+      else if (target) next = target.handle ? handleCursors[target.handle] : 'move';
+    }
+    setCursor(next);
+  }
+  useLayoutEffect(() => { updateCursor(); }, [props.tool, props.selected, props.shapes, props.cropDraft, props.disabled, props.editing, view, space]);
   function pointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (props.disabled || props.editing || ![0, 1].includes(event.button)) return;
     event.preventDefault(); stage.current!.focus(); stage.current!.setPointerCapture(event.pointerId);
     const screen = local(event), point = imagePoint(screen);
+    pointer.current = screen;
     const original = toImage(screen, view);
     if (space || event.button === 1) { gesture.current = { mode: 'pan', start: point, screen, view, initial: props.shapes, moved: false }; return; }
     if (original.x < crop.x || original.y < crop.y || original.x > crop.x + crop.width || original.y > crop.y + crop.height) { props.onSelect(null); return; }
-    if (props.tool === 'crop' && props.cropDraft) {
-      const handle = hitHandle(props.cropDraft, point, view.zoom);
-      if (handle || hitTest(props.cropDraft, point, 0)) {
-        gesture.current = { mode: handle ? 'resize' : 'move', start: point, screen, shape: props.cropDraft, handle, initial: [...props.shapes, props.cropDraft], view, moved: false }; showPreview([...props.shapes, props.cropDraft]); return;
-      }
+    const target = targetAt(original);
+    if (target) {
+      const { shape, handle } = target, initial = shape.kind === 'crop' ? [...props.shapes, shape] : props.shapes;
+      if (shape.kind !== 'crop') props.onSelect(shape.id);
+      gesture.current = { mode: handle ? 'resize' : 'move', start: point, screen, shape, handle, initial, view, moved: false };
+      // Even a click without movement must repaint the effect after the gesture ends.
+      showPreview(initial); return;
     }
-    if (props.tool === 'select') {
-      const selected = props.shapes.find(shape => shape.id === props.selected), handle = selected && hitHandle(selected, point, view.zoom);
-      const hit = handle ? selected : [...props.shapes].reverse().find(shape => shape.kind !== 'crop' && hitTest(shape, point, 5 / view.zoom));
-      props.onSelect(hit?.id ?? null);
-      if (hit) {
-        gesture.current = { mode: handle ? 'resize' : 'move', start: point, screen, shape: hit, handle, initial: props.shapes, view, moved: false };
-        // Even a click without movement must repaint the effect after the gesture ends.
-        showPreview(props.shapes);
-      }
-      return;
-    }
+    if (props.tool === 'select') { props.onSelect(null); return; }
     const shape: Shape = { id: crypto.randomUUID(), kind: props.tool, x1: point.x, y1: point.y, x2: point.x, y2: point.y, color: props.color, stroke: props.stroke, ...(props.tool === 'pixelate' ? { blockSize: props.blockSize } : {}), ...(props.tool === 'text' ? { text: '', fontSize: props.fontSize, background: props.background } : {}) };
     props.onSelect(shape.id);
     if (props.tool === 'text') { props.onEdit(measureText(shape)); return; }
@@ -167,7 +187,8 @@ export default forwardRef<CanvasHandle, Props>(function CanvasEditor(props, ref)
     showPreview(drag.mode === 'draw' ? [...drag.initial, changed] : drag.initial.map(shape => shape.id === changed.id ? changed : shape));
   }
   function pointerMove(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!gesture.current) return; nextPoint.current = local(event);
+    pointer.current = local(event); updateCursor();
+    if (!gesture.current) return; nextPoint.current = pointer.current;
     if (!frame.current) frame.current = requestAnimationFrame(() => { frame.current = 0; if (nextPoint.current) applyPoint(nextPoint.current); });
   }
   function finish(event: ReactPointerEvent<HTMLDivElement>, cancel = false) {
@@ -178,14 +199,16 @@ export default forwardRef<CanvasHandle, Props>(function CanvasEditor(props, ref)
       if (drag.shape?.kind === 'crop') { const draft = previewRef.current.find(s => s.id === drag.shape!.id); if (draft) props.onCropDraft(cropShape(draft, crop)); }
       else props.onCommit(previewRef.current.map(normalizeShape));
     }
-    gesture.current = null; showPreview(null);
+    gesture.current = null; showPreview(null); pointer.current = local(event); updateCursor();
     if (stage.current?.hasPointerCapture(event.pointerId)) stage.current.releasePointerCapture(event.pointerId);
   }
   const text = props.editing, textPosition = text && toScreen({ x: text.x1, y: text.y1 }, view), textBounds = text && bounds(text);
   return <div ref={stage} className={'editor-stage' + (space ? ' panning' : props.tool === 'select' ? ' selecting' : ' drawing')} tabIndex={0} aria-label="Redigeringsyta" role="region"
+    style={{ cursor }}
     data-zoom={view.zoom} data-offset-x={view.x} data-offset-y={view.y} data-shapes={props.shapes.length}
-    onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={event => finish(event)} onPointerCancel={event => finish(event, true)}
-    onKeyDown={event => { if (event.key === 'Escape' && gesture.current) { event.preventDefault(); event.stopPropagation(); cancelAnimationFrame(frame.current); frame.current = 0; gesture.current = null; showPreview(null); } }}
+    onPointerDown={event => { pointerDown(event); updateCursor(); }} onPointerMove={pointerMove} onPointerUp={event => finish(event)} onPointerCancel={event => finish(event, true)}
+    onPointerLeave={() => { pointer.current = null; updateCursor(); }}
+    onKeyDown={event => { if (event.key === 'Escape' && gesture.current) { event.preventDefault(); event.stopPropagation(); cancelAnimationFrame(frame.current); frame.current = 0; gesture.current = null; showPreview(null); updateCursor(); } }}
     onDoubleClick={event => {
       if (props.disabled || props.editing) return;
       const point = imagePoint(local(event)); const shape = [...props.shapes].reverse().find(shape => hitTest(shape, point, 5 / view.zoom));

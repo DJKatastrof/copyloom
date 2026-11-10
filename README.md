@@ -32,7 +32,7 @@ Copyloom can also take over Win+V, and give it back to Windows again.
 
 Copyloom runs on Windows 11, 64-bit. Download `Copyloom-<version>-setup.exe` from [Releases](../../releases/latest) and run it.
 
-The installer is not code-signed yet, so Windows may show *Windows protected your PC*. Choose **More info**, then **Run anyway**. Copyloom does not update itself; new versions are published under Releases.
+The installer is not code-signed yet, so Windows may show *Windows protected your PC*. Choose **More info**, then **Run anyway**. From 0.1.40, Copyloom tells you when a new version is out, and one click installs it.
 
 You can also [build it from source](#build-from-source).
 
@@ -102,7 +102,7 @@ You can also [build it from source](#build-from-source).
 
 ## Your data
 
-Copyloom does not connect to the internet. Clips, images and settings stay on your PC, in an encrypted database. Text recognition uses Windows' own engine on your PC.
+The only connection Copyloom makes is a daily look at GitHub Releases for a new version, which you can turn off under Settings → General. Clips, images and settings stay on your PC, in an encrypted database. Text recognition uses Windows' own engine on your PC.
 
 ## Build from source
 

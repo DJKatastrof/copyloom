@@ -25,6 +25,7 @@ mod rich_text;
 mod preferences;
 mod storage;
 mod library_update;
+mod updates;
 #[cfg(windows)]
 mod source_app;
 
@@ -996,6 +997,7 @@ pub fn run() {
             if !autostart::autostart_requested(args.into_iter().map(std::ffi::OsString::from)) { let _ = set_view(app, "library"); }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_menu_event(|app, event| match event.id.as_ref() {
             "library" | "panel" => { let _ = set_view(app, event.id.as_ref()); }
             "pause" => {
@@ -1006,6 +1008,7 @@ pub fn run() {
             _ => {}
         })
         .manage(RuntimeState::default())
+        .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             frontend_ready,
             set_capture_recording,
@@ -1046,7 +1049,10 @@ pub fn run() {
             storage_transfer::choose_excluded_program,
             storage_transfer::choose_export_file,
             storage_transfer::export_history,
-            storage_transfer::restore_history
+            storage_transfer::restore_history,
+            updates::get_update,
+            updates::check_for_update,
+            updates::install_update
         ])
         .setup(|app| {
             startup::mark("webview_created_setup_enter");
@@ -1138,6 +1144,7 @@ pub fn run() {
                     if backups.is_some() { backup::start(handle.clone()); }
                 }
             })?;
+            updates::start(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

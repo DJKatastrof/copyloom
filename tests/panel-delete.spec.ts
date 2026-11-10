@@ -3,7 +3,7 @@ import { loadSamples } from '../scripts/test-samples.mjs';
 
 test('the trash button in the panel deletes a clip without pasting; always shown, on hover or hidden', async ({ page }) => {
   await page.goto('/'); await loadSamples(page);
-  await page.getByRole('button', { name: 'Quick panel', exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   const rows = page.locator('.quick-panel .clip-row');
   await expect(rows).toHaveCount(6);
   const trash = page.getByRole('button', { name: 'Delete Violett', exact: true });
@@ -26,7 +26,7 @@ test('the trash button in the panel deletes a clip without pasting; always shown
     await setting.click(); await page.getByRole('option', { name: label, exact: true }).click();
     await expect(setting).toContainText(label);
     await page.getByRole('navigation', { name: 'Library', exact: true }).getByRole('button', { name: /All clips/ }).click();
-    await page.getByRole('button', { name: 'Quick panel', exact: true }).click();
+    await page.keyboard.press('Control+Shift+v');
   };
   await choose('Shown on hover');
   await expect(trash).toHaveCSS('opacity', '0');

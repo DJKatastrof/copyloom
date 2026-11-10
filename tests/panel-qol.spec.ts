@@ -9,7 +9,7 @@ test('category actions and the category filter work directly in the panel', asyn
       await runtime.dispatch({ type: 'addCategory', category: { id, name, color, clipOrder: [] } });
     }
   });
-  await page.getByRole('button', { name: "Quick panel", exact: true }).click();
+  await page.keyboard.press('Control+Shift+v');
   const note = page.getByRole('button', { name: 'Show Projektanteckningar', exact: true });
   await note.click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Add to category', exact: true }).click();

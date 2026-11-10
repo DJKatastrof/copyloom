@@ -98,6 +98,9 @@ pub struct Settings {
     /// The trash button on the quick panel's rows: "always" (default), on "hover", or "off".
     #[serde(default = "default_panel_trash")]
     pub panel_trash: String,
+    /// Look for a new version on GitHub once a day; installing always waits for the user.
+    #[serde(default = "enabled_by_default")]
+    pub check_updates: bool,
 }
 
 fn enabled_by_default() -> bool { true }
@@ -124,6 +127,7 @@ impl Default for Settings {
             panel_position: default_panel_position(),
             panel_click: default_panel_click(),
             panel_trash: default_panel_trash(),
+            check_updates: true,
         }
     }
 }
