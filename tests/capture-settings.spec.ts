@@ -6,7 +6,7 @@ test('capture shortcut can be enabled, recorded and disabled', async ({ page }) 
   // Each choice takes effect at once.
   const recorder = page.locator('.settings-section').getByRole('button', { name: "Keyboard shortcut", exact: true });
   await expect(recorder).toHaveText("Off");
-  await page.getByRole('button', { name: 'Print Screen', exact: true }).click();
+  await recorder.click(); await expect(recorder).toHaveText('Press your key…'); await page.keyboard.press('PrintScreen');
   await expect(recorder).toHaveText('Print Screen');
   await recorder.click(); await page.keyboard.press('F8');
   await expect(recorder).toHaveText('F8');

@@ -33,7 +33,8 @@ export interface Settings {
   startMinimized?: boolean;
   pasteDirectly?: boolean;
   editAfterCapture?: boolean;
-  captureBehavior?: 'copy' | 'edit' | 'choose';
+  // The Windows app sends null until the user has chosen; null means the default.
+  captureBehavior?: 'copy' | 'edit' | 'choose' | null;
   language?: 'en' | 'sv';
   winV?: boolean;
   excludedPrograms?: string[];
@@ -129,7 +130,7 @@ export function validateSettings(settings: Settings): Settings {
   if (settings.panelPosition !== undefined && !['pointer', 'caret', 'center', 'last'].includes(settings.panelPosition)) throw new Error('Invalid quick panel position.');
   if (settings.panelClick !== undefined && !['single', 'double'].includes(settings.panelClick)) throw new Error('Invalid quick panel click setting.');
   if (settings.panelTrash !== undefined && !['always', 'hover', 'off'].includes(settings.panelTrash)) throw new Error('Invalid quick panel trash button setting.');
-  if (settings.captureBehavior !== undefined && !['copy', 'edit', 'choose'].includes(settings.captureBehavior)) throw new Error('Invalid action after screenshot.');
+  if (settings.captureBehavior != null && !['copy', 'edit', 'choose'].includes(settings.captureBehavior)) throw new Error('Invalid action after screenshot.');
   if (settings.editAfterCapture !== undefined && typeof settings.editAfterCapture !== 'boolean') throw new Error('Invalid editor setting after screenshot.');
   if (settings.pasteDirectly !== undefined && typeof settings.pasteDirectly !== 'boolean') throw new Error('Invalid paste setting.');
   if (settings.checkUpdates !== undefined && typeof settings.checkUpdates !== 'boolean') throw new Error('Invalid update setting.');

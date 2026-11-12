@@ -26,10 +26,16 @@ async function host(page: Page, saved: string | null = null, enabled: boolean | 
   await page.goto('/');await page.getByRole('button',{name:'Settings',exact:true}).click();
 }
 const capture = (page: Page) => page.getByRole('navigation',{name:'Settings sections'}).getByRole('button',{name:'Screenshot',exact:true});
+async function recordPrintScreen(page: Page) {
+  const recorder = page.getByRole('button', { name: 'Keyboard shortcut', exact: true });
+  await recorder.click();
+  await expect(recorder).toHaveText('Press your key…');
+  await page.keyboard.press('PrintScreen');
+}
 
 test('Print Screen conflict is actionable and rechecked after returning from Windows',async({page})=>{
   await host(page);await capture(page).click();
-  await page.getByRole('button',{name:'Print Screen',exact:true}).click();
+  await recordPrintScreen(page);
   await expect(page.getByRole('alert')).toHaveText('Windows is using Print Screen');
   // Print Screen waits until Windows lets go of it; nothing is saved meanwhile.
   expect(await page.evaluate(()=>(window as any).settingsHost.writes.length)).toBe(0);
@@ -51,7 +57,7 @@ test('a blocked saved shortcut can be activated again without changing settings'
 
 test('unknown Windows state stays uncertain; another key remains usable',async({page})=>{
   await host(page,null,null);await capture(page).click();
-  await page.getByRole('button',{name:'Print Screen',exact:true}).click();
+  await recordPrintScreen(page);
   await expect(page.getByText('Check Print Screen in Windows')).toBeVisible();
   expect(await page.evaluate(()=>(window as any).settingsHost.writes.at(-1).captureShortcut)).toBe('PrintScreen');
   const recorder=page.locator('.settings-section').getByRole('button',{name:'Keyboard shortcut',exact:true});

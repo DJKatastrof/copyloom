@@ -1,10 +1,17 @@
 #[cfg(windows)]
 mod window_state;
 mod win_v;
+mod windows_hotkeys;
 mod panel_place;
 mod autostart;
 mod backup;
 mod capture_settings;
+#[cfg(windows)]
+mod shortcut_recorder;
+#[cfg(windows)]
+mod screenshot_shortcut;
+#[cfg(windows)]
+mod key_helper;
 mod startup;
 mod editor;
 mod export;
@@ -60,6 +67,8 @@ pub struct RuntimeState {
     shortcut_change: Mutex<()>,
     shortcut_held: AtomicBool,
     capture_shortcut_held: AtomicBool,
+    #[cfg(windows)]
+    key_helper: Mutex<Option<key_helper::Helper>>,
     storage: Mutex<Option<storage::Storage>>,
     storage_maintenance: Mutex<()>,
     startup_ready: Mutex<bool>,
@@ -131,7 +140,10 @@ fn win_v_status(app: &tauri::AppHandle) -> Result<win_v::Status, String> {
     Ok(win_v::Status { released: win_v::released().unwrap_or(false), registered: (settings.win_v || settings.shortcut == win_v::SHORTCUT) && app.global_shortcut().is_registered(win_v::SHORTCUT) })
 }
 #[tauri::command]
-fn get_win_v(app: tauri::AppHandle) -> Result<win_v::Status, String> { win_v_status(&app) }
+async fn get_win_v(app: tauri::AppHandle) -> Result<win_v::Status, String> {
+    // Off the main thread, like get_capture_environment: settings changes hold the library while registering there.
+    tauri::async_runtime::spawn_blocking(move || win_v_status(&app)).await.map_err(|_| lock_error())?
+}
 /// Turns Win+V on (released by Windows, then registered) or gives it back to Windows.
 #[tauri::command]
 async fn set_win_v(app: tauri::AppHandle, enabled: bool) -> Result<win_v::Status, String> {
@@ -162,6 +174,7 @@ async fn restart_explorer(app: tauri::AppHandle) -> Result<win_v::Status, String
 
 fn register_capture_shortcut(app: &tauri::AppHandle, shortcut: &str) -> Result<(), String> {
     #[cfg(windows)] {
+        if shortcut == capture_settings::WIN_SHIFT_S { return key_helper::set_capture(app, true); }
         capture_settings::ensure_available(shortcut, capture_settings::print_screen_enabled().unwrap_or(None))?;
         app.state::<RuntimeState>().capture_shortcut_held.store(false,Ordering::SeqCst);
         app.global_shortcut().on_shortcut(shortcut, |app, _, event| {
@@ -171,6 +184,19 @@ fn register_capture_shortcut(app: &tauri::AppHandle, shortcut: &str) -> Result<(
         }).map_err(|_| "The screenshot key is in use. Choose another key or release it in Greenshot or Snipping Tool.".into())
     }
     #[cfg(not(windows))] { let _=(app,shortcut); Err("Screenshots are only available on Windows.".into()) }
+}
+
+fn capture_shortcut_registered(app: &tauri::AppHandle, shortcut: &str) -> bool {
+    #[cfg(windows)]
+    if shortcut == capture_settings::WIN_SHIFT_S { return key_helper::capturing(app); }
+    app.global_shortcut().is_registered(shortcut)
+}
+
+fn unregister_capture_shortcut(app: &tauri::AppHandle, shortcut: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    if shortcut == capture_settings::WIN_SHIFT_S { return key_helper::set_capture(app, false); }
+    if app.global_shortcut().is_registered(shortcut) { app.global_shortcut().unregister(shortcut).map_err(|error| error.to_string())?; }
+    Ok(())
 }
 
 fn panel_shortcut_allowed(recording:bool,library_focused:bool)->bool { !recording && !library_focused }
@@ -187,16 +213,23 @@ fn set_shortcut_recording(app:&tauri::AppHandle,recording:bool)->Result<(),Strin
     let state=app.state::<RuntimeState>();
     let _change=state.shortcut_change.lock().map_err(|_|lock_error())?;
     let settings=state.library.lock().map_err(|_|lock_error())?.settings.clone();
+    // Keys Windows consumes before the WebView sees them are recorded by the keyboard helper.
+    #[cfg(windows)]
+    if recording { key_helper::set_recording(app, true)?; }
     state.shortcut_recording.store(recording,Ordering::SeqCst);
     state.shortcut_held.store(false,Ordering::SeqCst); state.capture_shortcut_held.store(false,Ordering::SeqCst);
     if recording {
-        for key in std::iter::once(settings.shortcut.as_str()).chain(settings.capture_shortcut.as_deref()).chain(settings.win_v.then_some(win_v::SHORTCUT)) {
+        for key in std::iter::once(settings.shortcut.as_str()).chain(settings.win_v.then_some(win_v::SHORTCUT)) {
             if app.global_shortcut().is_registered(key) { app.global_shortcut().unregister(key).map_err(|e|e.to_string())?; }
         }
+        if let Some(key) = &settings.capture_shortcut { unregister_capture_shortcut(app, key)?; }
     } else {
         if !app.global_shortcut().is_registered(settings.shortcut.as_str()) { register_shortcut(app,&settings.shortcut)?; }
         sync_win_v(app,&settings);
-        if let Some(key)=settings.capture_shortcut { if !app.global_shortcut().is_registered(key.as_str()) { register_capture_shortcut(app,&key)?; } }
+        if let Some(key)=settings.capture_shortcut { if !capture_shortcut_registered(app, &key) { register_capture_shortcut(app,&key)?; } }
+        // After re-registration, so a helper still needed for Win+Shift+S is not restarted.
+        #[cfg(windows)]
+        key_helper::set_recording(app, false)?;
     }
     Ok(())
 }
@@ -318,16 +351,28 @@ fn apply_core(app: &tauri::AppHandle, mut action: Action, captured: bool) -> Res
                 }
             }
             if let Some(old) = &old_capture {
-                if app.global_shortcut().is_registered(old.as_str()) && app.global_shortcut().unregister(old.as_str()).is_err() {
-                    if let Some(key)=&settings.capture_shortcut { let _=app.global_shortcut().unregister(key.as_str()); }
+                if let Err(mut error) = unregister_capture_shortcut(app, old) {
+                    if let Some(key)=&settings.capture_shortcut {
+                        if let Err(restore) = unregister_capture_shortcut(app, key) { error = format!("{error} {restore}"); }
+                    }
+                    if !capture_shortcut_registered(app, old) {
+                        if let Err(restore) = register_capture_shortcut(app, old) { error = format!("{error} {restore}"); }
+                    }
                     if settings.shortcut != old_shortcut { let _=app.global_shortcut().unregister(settings.shortcut.as_str()); let _=register_shortcut(app,&old_shortcut); }
-                    return Err("Couldn't replace the old screenshot key.".into());
+                    return Err(format!("Couldn't replace the old screenshot key. {error}"));
                 }
             }
         }
         if !recording { sync_win_v(app, settings); }
-        if let Err(error) = preferences::save(&path, &next) {
-            if !recording && settings.capture_shortcut != old_capture { if let Some(key)=&settings.capture_shortcut { let _=app.global_shortcut().unregister(key.as_str()); } if let Some(key)=&old_capture { let _=register_capture_shortcut(app,key); } }
+        if let Err(mut error) = preferences::save(&path, &next) {
+            if !recording && settings.capture_shortcut != old_capture {
+                if let Some(key)=&settings.capture_shortcut {
+                    if let Err(restore) = unregister_capture_shortcut(app, key) { error = format!("{error} {restore}"); }
+                }
+                if let Some(key)=&old_capture {
+                    if let Err(restore) = register_capture_shortcut(app,key) { error = format!("{error} {restore}"); }
+                }
+            }
             if !recording && settings.shortcut != old_shortcut {
                 let _ = app.global_shortcut().unregister(settings.shortcut.as_str());
                 let _ = register_shortcut(app, &old_shortcut);
@@ -978,6 +1023,9 @@ fn open_data_folder(state: State<'_, RuntimeState>) -> Result<(), String> {
 }
 
 pub fn run() {
+    // The keyboard helper must never reach Tauri, single-instance or storage setup.
+    #[cfg(windows)]
+    if std::env::args_os().any(|arg| arg == key_helper::ARG) { key_helper::run_helper(); }
     startup::begin();
     let mut context = tauri::generate_context!();
     startup::mark("context_ready");
@@ -1207,7 +1255,7 @@ pub fn run() {
             #[cfg(windows)]
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) { let _=window_state::save(app); editor::save_newest(app); }
             #[cfg(windows)]
-            if matches!(event, tauri::RunEvent::Exit) { tray_worker::shutdown(); }
+            if matches!(event, tauri::RunEvent::Exit) { key_helper::shutdown(app); tray_worker::shutdown(); }
         });
 }
 
@@ -1287,16 +1335,46 @@ pub fn probe_shortcut_settings(app:&tauri::AppHandle)->bool {
         apply_core(app,Action::SetSettings {settings:b.clone()},false)?;
         if state.shortcut_held.load(Ordering::SeqCst) { return Ok(false); }
         set_shortcut_recording(app,true)?;
+        #[cfg(windows)]
+        if !key_helper::recording(app) { return Err("The keyboard helper did not start recording.".into()); }
         if app.global_shortcut().is_registered(b.shortcut.as_str()) || app.global_shortcut().is_registered(b.capture_shortcut.as_deref().unwrap()) { return Ok(false); }
         apply_core(app,Action::SetSettings {settings:a.clone()},false)?;
         set_shortcut_recording(app,false)?;
+        #[cfg(windows)]
+        if key_helper::recording(app) { return Err("The keyboard helper kept recording.".into()); }
         let active=app.global_shortcut().is_registered(a.shortcut.as_str()) && app.global_shortcut().is_registered(a.capture_shortcut.as_deref().unwrap());
         // A → B → A works again, including captured-key guard reset.
         apply_core(app,Action::SetSettings {settings:b.clone()},false)?;
         apply_core(app,Action::SetSettings {settings:a.clone()},false)?;
-        Ok(active && app.global_shortcut().is_registered(a.shortcut.as_str()) && app.global_shortcut().is_registered(a.capture_shortcut.as_deref().unwrap()))
+        if !active || !app.global_shortcut().is_registered(a.shortcut.as_str()) || !capture_shortcut_registered(app, a.capture_shortcut.as_deref().unwrap()) { return Ok(false); }
+        #[cfg(windows)] {
+            let windows_s = windows_hotkeys::released('S')?;
+            let mut selected = a.clone();
+            selected.capture_shortcut = Some(capture_settings::WIN_SHIFT_S.into());
+            apply_core(app, Action::SetSettings { settings: selected.clone() }, false)?;
+            if !capture_shortcut_registered(app, capture_settings::WIN_SHIFT_S) || app.global_shortcut().is_registered(capture_settings::WIN_SHIFT_S) { return Err("Win+Shift+S was not activated in the keyboard helper.".into()); }
+            set_shortcut_recording(app, true)?;
+            if capture_shortcut_registered(app, capture_settings::WIN_SHIFT_S) || !key_helper::recording(app) { return Err("Recording did not pause Win+Shift+S.".into()); }
+            set_shortcut_recording(app, false)?;
+            if !capture_shortcut_registered(app, capture_settings::WIN_SHIFT_S) || key_helper::recording(app) { return Err("Win+Shift+S did not resume after recording.".into()); }
+            apply_core(app, Action::SetSettings { settings: a }, false)?;
+            if capture_shortcut_registered(app, capture_settings::WIN_SHIFT_S) { return Err("Win+Shift+S stayed active after another key was chosen.".into()); }
+            if windows_hotkeys::released('S')? != windows_s { return Err("Windows S shortcuts changed.".into()); }
+            startup::mark("screenshot_hook_verified");
+        }
+        Ok(true)
     })();
+    #[cfg(windows)]
+    if let Err(error) = unregister_capture_shortcut(app, capture_settings::WIN_SHIFT_S) {
+        let _ = app.emit("runtime:error", error);
+        return false;
+    }
+    #[cfg(windows)]
+    key_helper::shutdown(app);
     app.global_shortcut().unregister_all().ok();
+    if let Err(error) = &result {
+        if let Some(dir) = startup::probe_dir() { let _ = std::fs::write(dir.join("shortcut-probe-error.txt"), error); }
+    }
     result.unwrap_or(false)
 }
 

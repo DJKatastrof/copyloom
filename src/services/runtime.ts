@@ -164,6 +164,10 @@ export async function reportFrontendReady(): Promise<void> {
 export async function setCaptureRecording(recording: boolean): Promise<void> {
   if (desktop) await invoke('set_capture_recording', { recording });
 }
+export async function subscribeRecordedShortcut(callback: (shortcut: string) => void): Promise<() => void> {
+  if (!desktop) return () => {};
+  return listen<string>('shortcut:recorded', event => callback(event.payload));
+}
 
 export async function openEditor(id: string): Promise<void> {
   if (!desktop) throw new Error('Image editing is available in the Windows app.');

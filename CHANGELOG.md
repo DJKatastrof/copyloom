@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.41 – 2026-11-12
+
+- **Win+Shift+S for screenshots:** click the shortcut box under Settings → Screenshot and press Win+Shift+S. Copyloom takes only that exact combination; Win+S for Windows search and Win+V keep working. No registry change and no File Explorer restart. Choose another shortcut or turn it off, and Windows gets its snipping shortcut back at once.
+- The shortcut box now records keys Windows normally takes first, such as Win+Shift+S and Print Screen, even while Copyloom has focus. The separate Print Screen and Win+Shift+S preset buttons are gone; the box is enough.
+- These keys are handled by a small hidden helper (`copyloom.exe --keyboard-helper`), because Windows does not let a WebView2 window's own process see keyboard input while that window has focus. It runs only when needed and exits with Copyloom.
+- Fixed: Settings could freeze when screenshot or Win+V status was read while a shortcut was changing.
+- Fixed: a shortcut could not be saved if *After screenshot* had never been chosen.
+
 ## 0.1.40 – 2026-11-10
 
 - **Library:** the Quick panel and Add buttons are removed from the top bar. Sorting and expand/collapse all days now sit directly above the dates. The quick panel and its shortcut remain available.

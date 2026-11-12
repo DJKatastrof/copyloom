@@ -1,8 +1,8 @@
 use serde::Serialize;
 use tauri::Manager;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 pub const PRINT_SCREEN_CONFLICT: &str = "Windows is using Print Screen for screen capture. Turn it off in Windows settings → Accessibility → Keyboard, or choose another key in Copyloom.";
+pub const WIN_SHIFT_S: &str = "Shift+Super+S";
 
 pub fn ensure_available(shortcut: &str, windows_enabled: Option<bool>) -> Result<(), String> {
     if shortcut.eq_ignore_ascii_case("PrintScreen") && windows_enabled == Some(true) {
@@ -34,10 +34,15 @@ pub fn print_screen_enabled() -> Result<Option<bool>, String> {
 pub struct Environment { print_screen_enabled: Option<bool>, registered: bool }
 
 #[tauri::command]
-pub fn get_capture_environment(app: tauri::AppHandle) -> Result<Environment, String> {
+pub async fn get_capture_environment(app: tauri::AppHandle) -> Result<Environment, String> {
+    // Off the main thread: settings changes hold the library while registering shortcuts there.
+    tauri::async_runtime::spawn_blocking(move || environment(&app)).await.map_err(|_| crate::lock_error())?
+}
+
+fn environment(app: &tauri::AppHandle) -> Result<Environment, String> {
     let state = app.state::<crate::RuntimeState>();
     let settings = state.library.lock().map_err(|_| crate::lock_error())?.settings.clone();
-    Ok(Environment { print_screen_enabled: print_screen_enabled()?, registered: settings.capture_shortcut.as_deref().is_some_and(|key| app.global_shortcut().is_registered(key)) })
+    Ok(Environment { print_screen_enabled: print_screen_enabled()?, registered: settings.capture_shortcut.as_deref().is_some_and(|key| crate::capture_shortcut_registered(app, key)) })
 }
 
 #[tauri::command]
@@ -49,9 +54,9 @@ pub async fn retry_capture_shortcut(app: tauri::AppHandle) -> Result<Environment
         let settings = state.library.lock().map_err(|_| crate::lock_error())?.settings.clone();
         if let Some(key) = settings.capture_shortcut {
             ensure_available(&key, print_screen_enabled()?)?;
-            if !app.global_shortcut().is_registered(key.as_str()) { crate::register_capture_shortcut(&app, &key)?; }
+            if !crate::capture_shortcut_registered(&app, &key) { crate::register_capture_shortcut(&app, &key)?; }
         }
-        get_capture_environment(app.clone())
+        environment(&app)
     }).await.map_err(|_| crate::lock_error())?
 }
 

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, RotateCcw } from 'lucide-react';
 import { DEFAULT_SETTINGS, clipsBefore, expiredClips, normalizeCaptureShortcut, normalizeShortcut, validateSettings } from '../domain/library';
 import type { Action, Library, Settings as AppSettings } from '../domain/library';
-import { desktop, setCaptureRecording as suspendCaptureShortcut, getWinV, setWinV, restartExplorer } from '../services/runtime';
+import { desktop, setCaptureRecording as suspendCaptureShortcut, subscribeRecordedShortcut, getWinV, setWinV, restartExplorer } from '../services/runtime';
 import type { WinVStatus } from '../services/runtime';
 import AutostartSettings from './AutostartSettings';
 import type { StartMode } from './AutostartSettings';
@@ -33,6 +33,9 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
   const [retentionBusy, setRetentionBusy] = useState(false);
   const [section, setSection] = useState<'general' | 'capture' | 'history'>('general');
   const [recording, setRecording] = useState<'panel' | 'capture' | null>(null);
+  const [recordingReady, setRecordingReady] = useState(!desktop);
+  const recordingRef = useRef(recording); recordingRef.current = recording;
+  const recordingQueue = useRef(Promise.resolve());
   const [error, setError] = useState('');
   const [autostart, setAutostartStatus] = useState<AutostartStatus | null>(null);
   const [autostartBusy, setAutostartBusy] = useState(false);
@@ -40,6 +43,7 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
   const [reload, setReload] = useState(0);
   // Print Screen chosen while Windows still owns the key: kept here until Windows lets go.
   const [pendingCapture, setPendingCapture] = useState<string | null>(null);
+  const [captureBusy, setCaptureBusy] = useState(false);
   const [winV, setWinVStatus] = useState<WinVStatus | null>(null);
   const [winVBusy, setWinVBusy] = useState(false);
   // 'current' after a check that found nothing newer; a found update replaces it.
@@ -72,8 +76,28 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
   }, [reload]);
   useEffect(() => {
     if (!recording) return;
-    void suspendCaptureShortcut(true).catch(cause => { setError(String(cause)); setRecording(null); });
-    return () => { void suspendCaptureShortcut(false).catch(cause => setError(String(cause))); };
+    let active = true, off: (() => void) | undefined;
+    setRecordingReady(false);
+    recordingQueue.current = recordingQueue.current.then(async () => {
+      if (!active) return;
+      off = await subscribeRecordedShortcut(combo => {
+        const target = recordingRef.current;
+        if (active && target) void finishRecordingRef.current(target, combo);
+      });
+      if (!active) return;
+      await suspendCaptureShortcut(true);
+      if (active) setRecordingReady(true);
+    }).catch(cause => { setError(String(cause)); setRecording(null); });
+    const blur = () => setRecording(null);
+    window.addEventListener('blur', blur);
+    return () => {
+      active = false;
+      window.removeEventListener('blur', blur);
+      recordingQueue.current = recordingQueue.current.then(async () => {
+        off?.();
+        await suspendCaptureShortcut(false);
+      }).catch(cause => setError(String(cause)));
+    };
   }, [!!recording]);
 
   async function apply(update: Partial<AppSettings>, expiry = false): Promise<boolean> {
@@ -121,7 +145,12 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
       try { if ((await getCaptureEnvironment()).printScreenEnabled) { setPendingCapture(key); return; } }
       catch { setError(t("Could not check the Windows setting. Try again.")); return; }
     }
-    setPendingCapture(null); await apply({ captureShortcut: key });
+    setCaptureBusy(true);
+    try {
+      setPendingCapture(null);
+      await apply({ captureShortcut: key });
+    } catch (cause) { setError(String(cause)); }
+    finally { setCaptureBusy(false); }
   }
   async function chooseStart(mode: StartMode) {
     setAutostartBusy(true); setAutostartError('');
@@ -156,18 +185,29 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
     // The settings in hand still say Win+V; say otherwise explicitly so it is not switched back on.
     if (await apply({ shortcut, winV: false })) await chooseWinV(false, true);
   }
+  async function finishRecording(target: 'panel' | 'capture', combo: string) {
+    if (recordingRef.current !== target) return;
+    let shortcut: string;
+    try { shortcut = target === 'panel' ? normalizeShortcut(combo) : normalizeCaptureShortcut(combo); }
+    catch (cause) { setError((cause as Error).message); return; }
+    recordingRef.current = null;
+    setRecording(null);
+    try {
+      await recordingQueue.current;
+      await suspendCaptureShortcut(false);
+      await (target === 'panel' ? chooseShortcut(shortcut) : chooseCapture(shortcut));
+    } catch (cause) { setError(String(cause)); }
+  }
+  const finishRecordingRef = useRef(finishRecording); finishRecordingRef.current = finishRecording;
   function record(target: 'panel' | 'capture', event: React.KeyboardEvent) {
     if (recording !== target) return;
     event.preventDefault(); event.stopPropagation();
     if (event.key === 'Escape') { setRecording(null); return; }
+    if (!recordingReady) return;
     if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return;
     const key = target === 'capture' && event.key === 'PrintScreen' ? 'PrintScreen' : event.key.toUpperCase();
     const combo = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Super', key].filter(Boolean).join('+');
-    try {
-      const shortcut = target === 'panel' ? normalizeShortcut(combo) : normalizeCaptureShortcut(combo);
-      setRecording(null);
-      void (target === 'panel' ? chooseShortcut(shortcut) : chooseCapture(shortcut));
-    } catch (cause) { setError((cause as Error).message); }
+    void finishRecording(target, combo);
   }
   const retention = settings.retentionDays;
   const retentionOptions = [...new Set([...RETENTION, ...(retention !== null ? [retention] : [])])].sort((a, b) => a - b).map(days => ({ value: String(days), label: retentionLabel(days) }));
@@ -185,14 +225,14 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
     try { await apply({ retentionDays: draftDays }, true); }
     finally { setRetentionBusy(false); }
   }
-  const captureLabel = (key: string | null | undefined) => key ? key.replace('PrintScreen', 'Print Screen').replace('Super', 'Win') : t("Off");
+  const captureLabel = (key: string | null | undefined) => key === 'Shift+Super+S' ? 'Win+Shift+S' : key ? key.replace('PrintScreen', 'Print Screen').replace('Super', 'Win') : t("Off");
 
   return <div className="settings-content">{dialog}
-    <div className="settings-topline"><nav className="settings-nav" aria-label={t("Settings sections")}>{([['general', t("General")], ['capture', t("Screenshot")], ['history', t("History")]] as const).map(([id, label]) => <button key={id} aria-current={section === id ? 'page' : undefined} onClick={() => { setRecording(null); setSection(id); }}>{label}</button>)}</nav><span className="settings-version">Copyloom {version}</span></div>
+    <div className="settings-topline"><nav className="settings-nav" aria-label={t("Settings sections")}>{([['general', t("General")], ['capture', t("Screenshot")], ['history', t("History")]] as const).map(([id, label]) => <button key={id} disabled={captureBusy} aria-current={section === id ? 'page' : undefined} onClick={() => { setRecording(null); setSection(id); }}>{label}</button>)}</nav><span className="settings-version">Copyloom {version}</span></div>
     {section === 'general' && <>
       <section className="settings-section"><h2>{t("Quick panel")}</h2>
         <div className="setting-row"><div><label id="shortcut-label">{t("Keyboard shortcut")}</label><p>{shortcutText}</p></div>
-          <div className="shortcut-controls"><button className={`shortcut-recorder${recording === 'panel' ? ' recording' : ''}`} aria-labelledby="shortcut-label" disabled={winVBusy} onClick={() => setRecording('panel')} onBlur={() => setRecording(current => current === 'panel' ? null : current)} onKeyDown={event => record('panel', event)}>{recording === 'panel' ? t("Press your shortcut…") : settings.winV ? 'Win+V' : own}</button>
+          <div className="shortcut-controls"><button className={`shortcut-recorder${recording === 'panel' ? ' recording' : ''}`} aria-labelledby="shortcut-label" disabled={winVBusy} onClick={() => setRecording('panel')} onBlur={() => setRecording(current => current === 'panel' ? null : current)} onKeyDown={event => record('panel', event)}>{recording === 'panel' ? recordingReady ? t("Press your shortcut…") : t("Working…") : settings.winV ? 'Win+V' : own}</button>
             {(settings.winV || settings.shortcut !== DEFAULT_SETTINGS.shortcut) && <button className="icon-button" title={t("Reset shortcut")} aria-label={t("Reset shortcut")} disabled={winVBusy} onClick={() => void chooseShortcut(DEFAULT_SETTINGS.shortcut)}><RotateCcw size={17} /></button>}
             {desktop && !settings.winV && <button className="text-button" disabled={winVBusy} onClick={() => void chooseWinV(true)}>Win+V</button>}
             {desktop && (settings.winV ? !winV?.registered : winV?.released) && <button className="text-button" disabled={winVBusy} onClick={() => void chooseWinV(!!settings.winV, true)}>{t("Restart File Explorer")}</button>}
@@ -231,13 +271,13 @@ export default function Settings({ library, act, deleteClips }: { library: Libra
     </>}
     {section === 'capture' && <section className="settings-section"><h2>{t("Screenshot")}</h2>
       <div className="setting-row"><div><label id="capture-shortcut-label">{t("Keyboard shortcut")}</label><p>{t("Drag to select an area. Escape cancels.")}</p></div><div className="shortcut-controls">
-        <button className={`shortcut-recorder${recording === 'capture' ? ' recording' : ''}`} aria-labelledby="capture-shortcut-label" onClick={() => setRecording('capture')} onBlur={() => setRecording(current => current === 'capture' ? null : current)} onKeyDown={event => record('capture', event)}>{recording === 'capture' ? t("Press your key…") : captureLabel(pendingCapture ?? settings.captureShortcut)}</button>
-        {(pendingCapture ?? settings.captureShortcut) !== 'PrintScreen' && <button className="text-button" onClick={() => void chooseCapture('PrintScreen')}>Print Screen</button>}
-        {(pendingCapture ?? settings.captureShortcut) && <button className="text-button" onClick={() => void chooseCapture(null)}>{t("Turn off")}</button>}
+        <button className={`shortcut-recorder${recording === 'capture' ? ' recording' : ''}`} aria-labelledby="capture-shortcut-label" disabled={captureBusy} onClick={() => setRecording('capture')} onBlur={() => setRecording(current => current === 'capture' ? null : current)} onKeyDown={event => record('capture', event)}>{captureBusy ? t("Working…") : recording === 'capture' ? recordingReady ? t("Press your key…") : t("Working…") : captureLabel(pendingCapture ?? settings.captureShortcut)}</button>
+        {(pendingCapture ?? settings.captureShortcut) && <button className="text-button" disabled={captureBusy} onClick={() => void chooseCapture(null)}>{t("Turn off")}</button>}
       </div></div>
+      {settings.captureShortcut === 'Shift+Super+S' && <p>{t("Win+Shift+S takes screenshots in Copyloom. Win+S and Win+V are unchanged.")}</p>}
       <CaptureWarning selected={pendingCapture ?? settings.captureShortcut ?? null} saved={settings.captureShortcut ?? null} recording={!!recording} onBlocked={blocked} />
       <div className="setting-row"><div><label htmlFor="after-capture">{t("After screenshot")}</label><p>{t("The original is always kept in the history.")}</p></div>
-        <Select id="after-capture" label={t("After screenshot")} value={settings.captureBehavior ?? (settings.editAfterCapture ? 'edit' : 'copy')} onChange={value => void apply({ captureBehavior: value as 'copy' | 'edit' | 'choose', editAfterCapture: value === 'edit' })} options={[{ value: 'copy', label: t("Copy to clipboard") }, { value: 'edit', label: t("Open in editor") }, { value: 'choose', label: t("Show Copy / Edit menu") }]} />
+        <Select id="after-capture" label={t("After screenshot")} disabled={captureBusy} value={settings.captureBehavior ?? (settings.editAfterCapture ? 'edit' : 'copy')} onChange={value => void apply({ captureBehavior: value as 'copy' | 'edit' | 'choose', editAfterCapture: value === 'edit' })} options={[{ value: 'copy', label: t("Copy to clipboard") }, { value: 'edit', label: t("Open in editor") }, { value: 'choose', label: t("Show Copy / Edit menu") }]} />
       </div>
     </section>}
     {section === 'history' && <section className="settings-section"><h2>{t("History")}</h2>

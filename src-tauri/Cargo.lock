@@ -545,7 +545,7 @@ dependencies = [
 
 [[package]]
 name = "copyloom"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "arboard",
  "base64 0.22.1",

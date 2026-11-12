@@ -59,7 +59,7 @@
 !macro NSIS_HOOK_POSTINSTALL
   !insertmacro CopyloomRepairAutostart "Software\Microsoft\Windows\CurrentVersion\Run" "$INSTDIR\${MAINBINARYNAME}.exe"
 !macroend
-; Uninstalling (not updating) gives Win+V back to Windows if Copyloom took it.
+; Uninstalling (not updating) restores only the Windows shortcuts Copyloom took.
 !include "WordFunc.nsh"
 !macro NSIS_HOOK_POSTUNINSTALL
   ${If} $UpdateMode <> 1
